@@ -5,6 +5,23 @@
   module.exports = {
     echoBackHello: function(name, successCallback, errorCallback) {
       return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'echoBackHello', [name]);
+    },
+
+    /*
+    on success:
+    successCallback [
+      {collectionKey:"1", name:"Camera Roll"}
+      {collectionKey:"2", name:"My Photo Stream"}
+    ]
+     */
+    getAssetCollections: function(successCallback, errorCallback) {
+      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'getAssetCollections', []);
+    },
+    selectAssetCollection: function(collectionKey, successCallback, errorCallback) {
+      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'selectAssetCollection', [collectionKey]);
+    },
+    setAssetWindow: function(offset, limit, successCallback, errorCallback) {
+      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'selectAssetCollection', [offset, limit]);
     }
   };
 

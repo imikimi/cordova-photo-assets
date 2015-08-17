@@ -3,6 +3,7 @@
 
 @implementation CordovaPhotoAssets
 
+// http://stackoverflow.com/questions/25981374/ios-8-photos-framework-get-a-list-of-all-albums-with-ios8
 - (void)echoBackHello:(CDVInvokedUrlCommand*)command
 {
     NSString* callbackId = [command callbackId];
