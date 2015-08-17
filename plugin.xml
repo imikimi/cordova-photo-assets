@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<plugin xmlns="http://www.phonegap.com/ns/plugins/1.0" id="com.phonegap.parsepushplugin" version="0.5.0">
+    <name>PhotoAssets</name>
+    <description>Cordova plugin for reading Photo assets on iOS</description>
+
+    <asset src="www/cordova-photo-assets.js" target="js/cordova-photo-assets.js"/>
+
+    <js-module src="www/cordova-photo-assets.js" name="PhotoAssets">
+        <clobbers target="PhotoAssets" />
+    </js-module>
+
+    <!-- ios -->
+    <platform name="ios">
+        <config-file target="config.xml" parent="/*">
+            <feature name="PhotoAssets">
+                <param name="ios-package" value="CordovaPhotoAssets" />
+            </feature>
+        </config-file>
+        <header-file src="src/ios/CordovaPhotoAssets.h" />
+        <source-file src="src/ios/CordovaPhotoAssets.m" />
+    </platform>
+</plugin>
