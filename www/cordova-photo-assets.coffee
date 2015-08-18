@@ -22,9 +22,9 @@ module.exports =
   setAssetWindow: (offset, limit, successCallback, errorCallback) ->
     cordova.exec successCallback, errorCallback, 'PhotoAssets', 'selectAssetCollection', [offset, limit]
 
-helloTest = ->
-  PhotoAssets.echoBackHello 'Cordova World',
-    (message) -> alert message
-  , -> alert 'Error calling Hello Plugin'
+# helloTest = ->
+#   PhotoAssets.echoBackHello 'Cordova World',
+#     (message) -> alert message
+#   , -> alert 'Error calling Hello Plugin'
 
-document.addEventListener 'deviceready', helloTest, false
+# document.addEventListener 'deviceready', helloTest, false

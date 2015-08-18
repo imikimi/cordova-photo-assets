@@ -19,5 +19,6 @@
         </config-file>
         <header-file src="src/ios/CordovaPhotoAssets.h" />
         <source-file src="src/ios/CordovaPhotoAssets.m" />
+        <framework src="Photos.framework" />
     </platform>
 </plugin>
