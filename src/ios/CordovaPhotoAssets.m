@@ -47,7 +47,6 @@ NSString *allImageAssetsKey = @"all";
 
 }
 
-
 - (void)getAssetCollections:(CDVInvokedUrlCommand*)command
 {
     [self.commandDelegate runInBackground:^{

@@ -1,26 +1,43 @@
 module.exports =
-  echoBackHello: (name, successCallback, errorCallback) ->
-    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'echoBackHello', [ name ]
-
   ###
   on success:
   successCallback [
-    {collectionKey:"1", name:"Camera Roll"}
-    {collectionKey:"2", name:"My Photo Stream"}
+    {id:"all",    name:"Camera Roll",     count: 2000}
+    {id:"abc123", name:"My Photo Stream", count: 999}
   ]
   ###
   getAssetCollections: (successCallback, errorCallback) ->
     cordova.exec successCallback, errorCallback, 'PhotoAssets', 'getAssetCollections', []
 
-  # collectionKey is one of the strings provided in the results from getAssetCollections
-  selectAssetCollection: (collectionKey, successCallback, errorCallback) ->
-    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'selectAssetCollection', [collectionKey]
+  ###
+  options:
+    thumbnailSize:  (pixels)
+    limit:          (int >= 1) number of thumbnails to return starting from the current offset.
+    offset:         (int >= 0) current thumbnail offset
+    collection:     (string) assetCollectionKey. Use "all" for all local images. Otherwise, get collection keys from getAssetCollections
+  ###
+  set: (options, successCallback, errorCallback) ->
+    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'setFromJavascript', [options]
 
-  # offset and limit are numbers
-  # offset should be >= 0
-  # limit should be >= 1
-  setAssetWindow: (offset, limit, successCallback, errorCallback) ->
-    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'selectAssetCollection', [offset, limit]
+  ###
+  options:
+    maxSize:            (pixels)
+    temporaryFilename:  If the name is the same as a previous call, the previous image is overwritten.
+                        This is handy so you don't end up with lots of temporary files wasting the users's storage.
+  successCallback:
+    ({photoUrl, pixelWidth, pixelHeight, originalPixelWidth, originalPixelHeight}) ->
+
+  TODO:
+    add options:
+      quality: 0-99
+
+    add callback info:
+      fileSize:
+      exif:     - as much exif data as we can extract
+
+  ###
+  getPhoto:  (options, successCallback, errorCallback) ->
+    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'getPhoto', [options]
 
 # helloTest = ->
 #   PhotoAssets.echoBackHello 'Cordova World',
