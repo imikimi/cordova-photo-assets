@@ -210,7 +210,7 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 {
     NSMutableArray *newAssets;
 
-    if (self.currentCollectionKey == allImageAssetsKey) {
+    if ([self.currentCollectionKey isEqualToString:allImageAssetsKey]) {
         newAssets = [self _enumerateAllAssets];
     } else {
         // follow specific assets, collectionKey must be a valid iOS localIdentifier
@@ -282,16 +282,23 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 }
 
 - (NSString *)_thumbnailFilePathForAsset:(PHAsset *)asset {
+    NSString *pathFriendlyIdentifier = [asset.localIdentifier stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
     NSUInteger lastModifiedAgeInSeconds = asset.modificationDate.timeIntervalSince1970;
-    return [NSString stringWithFormat:@"%@/thumbnail_%@_%lu.jpg", self.localStoragePath, asset.localIdentifier, (unsigned long)lastModifiedAgeInSeconds];
+    return [NSString stringWithFormat:@"%@/thumbnail_%@_%lu.jpg", self.localStoragePath, pathFriendlyIdentifier, (unsigned long)lastModifiedAgeInSeconds];
 }
 
 - (NSString *)_writeThumbnail:(UIImage *)image toFilePath:(NSString *)filePath
 {
     NSData *data = UIImageJPEGRepresentation(image, self.thumbnailQuality/100.0f);
 
+    if (!data) {
+        NSLog(@"error generating jpg for thumbnail: width:%d height:%d filePath:%@", (int)image.size.width, (int)image.size.height, filePath);
+        return nil;
+    }
+
     NSError* err = nil;
-    if (![data writeToFile:filePath options:NSAtomicWrite error:&err]) {
+    BOOL success = [data writeToFile:filePath options:NSAtomicWrite error:&err];
+    if (!success) {
         NSLog(@"error writing thumbnail: %@ error: %@", filePath, [err localizedDescription]);
         return nil;
     }
@@ -320,8 +327,8 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
                  [props setObject:[NSNumber numberWithInt:image.size.height] forKey:@"thumbnailPixelHeight"];
                  [props setObject:[NSNumber numberWithInt:(int)asset.pixelWidth] forKey:@"originalPixelWidth"];
                  [props setObject:[NSNumber numberWithInt:(int)asset.pixelHeight] forKey:@"originalPixelHeight"];
-                 [props setObject:asset.creationDate forKey:@"creationDate"];
-                 [props setObject:asset.modificationDate forKey:@"modificationDate"];
+//                 [props setObject:asset.creationDate forKey:@"creationDate"];
+//                 [props setObject:asset.modificationDate forKey:@"modificationDate"];
                  [outputAssets addObject:props];
              }
          }];
