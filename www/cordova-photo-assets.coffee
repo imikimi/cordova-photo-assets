@@ -16,8 +16,11 @@ module.exports =
     offset:         (int >= 0) current thumbnail offset
     collection:     (string) assetCollectionKey. Use "all" for all local images. Otherwise, get collection keys from getAssetCollections
   ###
-  set: (options, successCallback, errorCallback) ->
-    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'setFromJavascript', [options]
+  setOptions: (options, successCallback, errorCallback) ->
+    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'setOptionsFromJavascript', [options]
+
+  getOptions: (successCallback, errorCallback) ->
+    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'getOptionsForJavascript', []
 
   ###
   options:

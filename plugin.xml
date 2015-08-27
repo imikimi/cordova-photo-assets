@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<plugin xmlns="http://www.phonegap.com/ns/plugins/1.0" id="com.phonegap.parsepushplugin" version="0.5.0">
+<plugin xmlns="http://www.phonegap.com/ns/plugins/1.0" id="com.imikimi.cordova_photo_assets_plugin" version="0.5.0">
     <name>PhotoAssets</name>
     <description>Cordova plugin for reading Photo assets on iOS</description>
 
