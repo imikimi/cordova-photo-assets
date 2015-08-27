@@ -14,8 +14,8 @@ document.addEventListener 'deviceready', ->
     console.log "all (local) photo assets selected, a photoAssetsChanged event will follow shortly"
 
 document.addEventListener 'photoAssetsChanged', ({details})->
-  {collection, offset, assets} = details
-  {collectionName} = collection
+  {collections, currentCollectionKey, offset, assets} = details
+  {collectionName} = collections[currentCollectionKey]
 
   console.log "PhotoAssets from Collection: #{collectionName}:"
   for asset in assets
@@ -30,7 +30,7 @@ This example shows how to get a list of all available collections, how to follow
 
 document.addEventListener 'deviceready', ->
 
-  PhotoAssets.getAssetCollections (assetCollections)->
+  PhotoAssets.getCollections (assetCollections)->
     [{
       collectionKey
       collectionName
@@ -47,19 +47,14 @@ document.addEventListener 'deviceready', ->
       console.log "selected first asset collection: " + collectionName
 
 document.addEventListener 'photoAssetsChanged', ({details})->
-  {collection, offset, limit, assets} = details
-  {collectionName} = collection
-
-  console.log "#{collectionName} assets: #{offset} to #{offset + assets.length - 1}:"
-  for asset in assets
-    console.log "  asset #{offset++}: #{asset.assetKey}"
+  # see previous example or API doc
 ```
 
 ### PhotoAssets API DETAILS
 
-#### getAssetCollections
+#### getCollections
 ```coffeescript
-PhotoAssets.getAssetCollections successCallback, errorCallback
+PhotoAssets.getCollections successCallback, errorCallback
 
 successCallback: (collections) ->
   [{collectionKey, collectionName, estimatedAssetCount}] = collections
@@ -86,7 +81,7 @@ successCallback: ->
 * thumbnailQuality:     (0-100)
 * limit:                (int >= 1) number of thumbnails to return starting from the current offset.
 * offset:               (int >= 0) current thumbnail offset
-* currentCollectionKey: (string) Use "all" for all local images. Otherwise, get collection keys from getAssetCollections
+* currentCollectionKey: (string) Use "all" for all local images. Otherwise, get collection keys from getCollections
 
 
 #### getOptions
@@ -122,8 +117,12 @@ Options:
 
 ```coffeescript
 document.addEventListener 'photoAssetsChanged', ({details})->
-  {collection, offset, limit, assets} = details
-  {collectionKey, collectionName, estimatedAssetCount} = collection
+  {options, collections, assets} = details
+
+  {currentCollectionKey, offset, limit} = options
+
+  currentCollection = collections[currentCollectionKey]
+  {collectionKey, collectionName, estimatedAssetCount} = currentCollection
 
   [{
     assetKey
@@ -132,7 +131,6 @@ document.addEventListener 'photoAssetsChanged', ({details})->
     thumbnailPixelHeight
     originalPixelWidth
     originalPixelHeight
-    mediaType
     creationDate
     modificationDate
   }] = assets
@@ -140,9 +138,8 @@ document.addEventListener 'photoAssetsChanged', ({details})->
 
 The event object's ```details```:
 
-* collection: information about the current collection
-* offset: the current offset for the data-window
-* limit: the current size of the data-window
+* collections: same object returned by getCollections
+* options: same object returned by getOptions
 * assets: an array of assets. assets.length <= limit
 
 The asset objects have the following fields:
@@ -152,7 +149,6 @@ The asset objects have the following fields:
 * thumbnailUrl: the URL of the immediately-available copy of the thumbnail for this asset
 * thumbnailPixelWidth, thumbnailPixelHeight: size of the thumbnail image
 * originalPixelWidth, originalPixelHeight: size of the original image
-* mediaType: ???
 * creationDate: string
 * modificationDate: string
 

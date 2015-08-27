@@ -44,7 +44,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     self.localStoragePath = [NSTemporaryDirectory() stringByStandardizingPath];
 }
 
-- (void)getAssetCollections:(CDVInvokedUrlCommand*)command
+- (void)getCollections:(CDVInvokedUrlCommand*)command
 {
     [self.commandDelegate runInBackground:^{
         // NOTE: no need to lock - _enumerateCollections doesn't access the plugin's singleton at all
@@ -61,12 +61,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     [self.commandDelegate runInBackground:^{
         pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
 
-        NSMutableDictionary *results = [NSMutableDictionary new];
-        [results setObject:[NSNumber numberWithLong:self.limit] forKey:@"limit"];
-        [results setObject:[NSNumber numberWithLong:self.offset] forKey:@"offset"];
-        [results setObject:[NSNumber numberWithLong:self.thumbnailQuality] forKey:@"thumbnailQuality"];
-        [results setObject:[NSNumber numberWithLong:self.thumbnailSize] forKey:@"thumbnailSize"];
-        [results setObject:self.currentCollectionKey forKey:@"currentCollectionKey"];
+        NSMutableDictionary *results = [self _getOptionsAsDictionary];
 
         pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
 
@@ -142,10 +137,33 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 }
 
 
+/**************************************************
+ INTERFACE IMPLEMENTATIONS
+ **************************************************/
+
+// implement PHPhotoLibraryChangeObserver
+- (void)photoLibraryDidChange:(PHChange *)changeInfo {
+    NSLog(@"photoLibraryDidChange");
+    [self.commandDelegate runInBackground:^{
+        pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
+        [self _updateThumbnailsAndThumbnailOptionsChanged:NO];
+        pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
+    }];
+}
 
 /**************************************************
  PRIVATE
  **************************************************/
+
+- (NSMutableDictionary *)_getOptionsAsDictionary {
+    NSMutableDictionary *results = [NSMutableDictionary new];
+    [results setObject:[NSNumber numberWithLong:self.limit] forKey:@"limit"];
+    [results setObject:[NSNumber numberWithLong:self.offset] forKey:@"offset"];
+    [results setObject:[NSNumber numberWithLong:self.thumbnailQuality] forKey:@"thumbnailQuality"];
+    [results setObject:[NSNumber numberWithLong:self.thumbnailSize] forKey:@"thumbnailSize"];
+    [results setObject:self.currentCollectionKey forKey:@"currentCollectionKey"];
+    return results;
+}
 
 - (void)_dispatchEventType:(NSString *)eventType withDetails:(id) details {
     if (![NSJSONSerialization isValidJSONObject: details]) {
@@ -170,23 +188,22 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     [self.commandDelegate evalJs: javascript scheduledOnRunLoop: true];
 }
 
-
-// implement PHPhotoLibraryChangeObserver
-- (void)photoLibraryDidChange:(PHChange *)changeInfo {
-    NSLog(@"photoLibraryDidChange");
-    [self.commandDelegate runInBackground:^{
-        pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
-        [self _updateThumbnailsAndThumbnailOptionsChanged:NO];
-        pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
-    }];
-}
-
 NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     NSMutableDictionary *assetsByKey = [NSMutableDictionary new];
     [assets enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
         [assetsByKey setObject:asset forKey:asset.localIdentifier];
     }];
     return assetsByKey;
+}
+
+- (void)_sendUpdateEventWithAssets:(NSArray *)outputAssets
+{
+    NSMutableDictionary *details = [NSMutableDictionary new];
+    [details setObject:_enumerateCollections()          forKey:@"collections"];
+    [details setObject:[self _getOptionsAsDictionary]   forKey:@"options"];
+    [details setObject:outputAssets                     forKey:@"assets"];
+
+    [self _dispatchEventType:@"photoAssetsChanged" withDetails:details];
 }
 
 - (void)_updateThumbnailsAndThumbnailOptionsChanged:(BOOL)thumbnailOptionsChanged
@@ -216,10 +233,13 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     }
 
     [self _deleteThumbnailsForAssets:removedAssets];
-    [self _createThumbnailsForAssets:addedAssets];
+    NSMutableArray *outputAssets = [self _createThumbnailsForAssets:addedAssets];
 
     self.monitoredAssets = newAssets;
     self.monitoredAssetsByKey = newAssetsByKey;
+
+    [self _sendUpdateEventWithAssets:outputAssets];
+
     /*
      Create all thumbnails
      Update monitoring of assets.
@@ -279,9 +299,9 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     return [[NSURL fileURLWithPath:filePath] absoluteString];
 }
 
-- (void)_createThumbnailsForAssets:(NSArray *)assetList
+- (NSMutableArray *)_createThumbnailsForAssets:(NSArray *)assetList
 {
-    NSMutableArray *activeAssets = [NSMutableArray new];
+    NSMutableArray *outputAssets = [NSMutableArray new];
     CGSize size;
     size.height = size.width = self.thumbnailSize;
     [assetList enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
@@ -294,12 +314,19 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
              NSString *filePath = [self _writeThumbnail:image toFilePath:[self _thumbnailFilePathForAsset:asset]];
              if (filePath) {
                  NSMutableDictionary *props = [NSMutableDictionary new];
-                 [props setObject:filePath forKey:@"url"];
-                 [props setObject:asset.localIdentifier forKey:@"key"];
-                 [activeAssets addObject:props];
+                 [props setObject:filePath              forKey:@"thumbnailUrl"];
+                 [props setObject:asset.localIdentifier forKey:@"assetKey"];
+                 [props setObject:[NSNumber numberWithInt:image.size.width] forKey:@"thumbnailPixelWidth"];
+                 [props setObject:[NSNumber numberWithInt:image.size.height] forKey:@"thumbnailPixelHeight"];
+                 [props setObject:[NSNumber numberWithInt:(int)asset.pixelWidth] forKey:@"originalPixelWidth"];
+                 [props setObject:[NSNumber numberWithInt:(int)asset.pixelHeight] forKey:@"originalPixelHeight"];
+                 [props setObject:asset.creationDate forKey:@"creationDate"];
+                 [props setObject:asset.modificationDate forKey:@"modificationDate"];
+                 [outputAssets addObject:props];
              }
          }];
     }];
+    return outputAssets;
 }
 
 - (NSMutableArray *)_enumerateAllAssets

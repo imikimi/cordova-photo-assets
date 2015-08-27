@@ -1,20 +1,27 @@
+# SEE README.md for API documentation
+
 module.exports =
   ###
   on success:
   successCallback [
-    {id:"all",    name:"Camera Roll",     count: 2000}
-    {id:"abc123", name:"My Photo Stream", count: 999}
+    # one or more collections with the following format:
+    {
+      collectionKey:        "all"
+      collectionName:       "Camera Roll"
+      estimatedAssetCount:  2000
+    }
   ]
   ###
-  getAssetCollections: (successCallback, errorCallback) ->
-    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'getAssetCollections', []
+  getCollections: (successCallback, errorCallback) ->
+    cordova.exec successCallback, errorCallback, 'PhotoAssets', 'getCollections', []
 
   ###
   options:
-    thumbnailSize:  (pixels)
-    limit:          (int >= 1) number of thumbnails to return starting from the current offset.
-    offset:         (int >= 0) current thumbnail offset
-    collection:     (string) assetCollectionKey. Use "all" for all local images. Otherwise, get collection keys from getAssetCollections
+    thumbnailSize:        (pixels)
+    thumbnailQuality:     (0-100)
+    limit:                (int >= 1) number of thumbnails to return starting from the current offset.
+    offset:               (int >= 0) current thumbnail offset
+    currentCollectionKey: (string) Use "all" for all local images. Otherwise, get collection keys from getCollections
   ###
   setOptions: (options, successCallback, errorCallback) ->
     cordova.exec successCallback, errorCallback, 'PhotoAssets', 'setOptionsFromJavascript', [options]
@@ -42,6 +49,29 @@ module.exports =
   getPhoto:  (options, successCallback, errorCallback) ->
     cordova.exec successCallback, errorCallback, 'PhotoAssets', 'getPhoto', [options]
 
+###
+photoAssetsChanged event:
+
+Gets triggered:
+  Whenever setOptions is called (and options actually change)
+  Whenever iOS notifies us of changes
+
+document.addEventListener 'photoAssetsChanged', ({details})->
+  {collection, offset, limit, assets} = details
+  {collectionKey, collectionName, estimatedAssetCount} = collection
+
+  console.log "#{collectionName} assets: #{offset} to #{offset + assets.length - 1}:"
+  for asset in assets
+    {
+      pixelWidth, pixelHeight, thumbnailUrl, mediaType, creationDate,
+      modificationDate
+    } = asset
+    console.log "asset #{offset++}", asset
+
+  if assets.length == limit
+    PhotoAssets.setAssetWindow offset + limit, limit
+
+###
 # helloTest = ->
 #   PhotoAssets.echoBackHello 'Cordova World',
 #     (message) -> alert message
