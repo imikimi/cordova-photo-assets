@@ -14,10 +14,10 @@ document.addEventListener 'deviceready', ->
     console.log "all (local) photo assets selected, a photoAssetsChanged event will follow shortly"
 
 document.addEventListener 'photoAssetsChanged', ({details})->
-  {collection, offset, limit, assets} = details
+  {collection, offset, assets} = details
   {collectionName} = collection
 
-  console.log "#{collectionName} assets: #{offset} to #{offset + assets.length - 1}:"
+  console.log "PhotoAssets from Collection: #{collectionName}:"
   for asset in assets
     console.log "  asset #{offset++}: #{asset.assetKey}"
 ```
@@ -62,22 +62,16 @@ document.addEventListener 'photoAssetsChanged', ({details})->
 PhotoAssets.getAssetCollections successCallback, errorCallback
 
 successCallback: (collections) ->
-  firstCollection = collections[0]
-  {collectionKey, collectionName, estimatedAssetCount} = firstCollection
+  [{collectionKey, collectionName, estimatedAssetCount}] = collections
 ```
 
-On success, the following is invoked:
+Returns, via successCallback, an array of collections with the following properties each:
 
-```coffeescript
-  successCallback [
-    # one or more collections with the following format:
-    {
-      collectionKey:        "all"
-      collectionName:       "Camera Roll"
-      estimatedAssetCount:  2000
-    }
-  ]
-```
+* collectionKey: unique identifier for the collection
+  * Used to select the collection you want for thumbnails:
+  * Ex: ```PhotoAssets.setOptions currentCollectionKey: collectionKey```
+* collectionName: human-readable name for the collection
+* estimatedAssetCount: (integer) estimated number of photos in the collection
 
 #### setOptions
 ```coffeescript
@@ -131,8 +125,7 @@ document.addEventListener 'photoAssetsChanged', ({details})->
   {collection, offset, limit, assets} = details
   {collectionKey, collectionName, estimatedAssetCount} = collection
 
-  firstAsset = assets[0]
-  {
+  [{
     assetKey
     thumbnailUrl
     thumbnailPixelWidth
@@ -142,19 +135,20 @@ document.addEventListener 'photoAssetsChanged', ({details})->
     mediaType
     creationDate
     modificationDate
-  } = firstAsset
+  }] = assets
 ```
 
 The event object's ```details```:
 
-* collection: information about the current collection in the same format as returned by ```PhotoAssets.getCollections```
+* collection: information about the current collection
 * offset: the current offset for the data-window
 * limit: the current size of the data-window
-* assets: an array of assets <= limit in length
+* assets: an array of assets. assets.length <= limit
 
 The asset objects have the following fields:
 
-* assetKey: unique identifier for the asset. Required for ```PhotoAssets.getPhoto```.
+* assetKey: unique identifier for the asset. Required for ```getPhoto```.
+  * Ex use: ```PhotoAssets.getPhoto assetKey: assetKey```.
 * thumbnailUrl: the URL of the immediately-available copy of the thumbnail for this asset
 * thumbnailPixelWidth, thumbnailPixelHeight: size of the thumbnail image
 * originalPixelWidth, originalPixelHeight: size of the original image
