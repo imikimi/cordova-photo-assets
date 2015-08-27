@@ -13,27 +13,13 @@ document.addEventListener 'deviceready', ->
   PhotoAssets.setOptions currentAssetCollection: "all", ->
     console.log "all (local) photo assets selected, a photoAssetsChanged event will follow shortly"
 
-# called after PhotoAssets options change OR the local OS notifies us that the photos have changed.
 document.addEventListener 'photoAssetsChanged', ({details})->
   {collection, offset, limit, assets} = details
-  {collectionKey, collectionName, estimatedAssetCount} = collection
+  {collectionName} = collection
 
   console.log "#{collectionName} assets: #{offset} to #{offset + assets.length - 1}:"
   for asset in assets
-    {
-      assetKey
-      pixelWidth
-      pixelHeight
-      thumbnailUrl
-      mediaType
-      creationDate
-      modificationDate
-    } = asset
-    console.log "asset #{offset++}", asset
-
-  if assets.length == limit
-    PhotoAssets.setAssetWindow offset + limit, limit
-
+    console.log "  asset #{offset++}: #{asset.assetKey}"
 ```
 
 ### Extended Example
@@ -61,7 +47,12 @@ document.addEventListener 'deviceready', ->
       console.log "selected first asset collection: " + collectionName
 
 document.addEventListener 'photoAssetsChanged', ({details})->
-  # ...
+  {collection, offset, limit, assets} = details
+  {collectionName} = collection
+
+  console.log "#{collectionName} assets: #{offset} to #{offset + assets.length - 1}:"
+  for asset in assets
+    console.log "  asset #{offset++}: #{asset.assetKey}"
 ```
 
 ### PhotoAssets API DETAILS
