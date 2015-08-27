@@ -70,7 +70,9 @@ document.addEventListener 'photoAssetsChanged', ({details})->
 ```coffeescript
 PhotoAssets.getAssetCollections successCallback, errorCallback
 
-successCallback: (arrayOfCollectionInfoObjects) ->
+successCallback: (collections) ->
+  firstCollection = collections[0]
+  {collectionKey, collectionName, estimatedAssetCount} = firstCollection
 ```
 
 On success, the following is invoked:
@@ -109,17 +111,20 @@ PhotoAssets.getOptions successCallback, errorCallback
 successCallback: (options) ->
 ```
 
-Returns the current value for all options as an ```options``` object
-on success: sucessCallback options
-wheren 'options' is an object with properties for the current value of all options
-
+Returns the current value for all options as an ```options``` object.
 
 #### getPhoto
 
 ```coffeescript
 PhotoAssets.getPhoto options, successCallback, errorCallback
 
-successCallback: ({photoUrl, pixelWidth, pixelHeight, originalPixelWidth, originalPixelHeight}) ->
+successCallback: ({
+  photoUrl,
+  pixelWidth,
+  pixelHeight,
+  originalPixelWidth,
+  originalPixelHeight
+}) ->
 ```
 
 Options:
@@ -130,11 +135,12 @@ Options:
 
 #### photoAssetsChanged event
 
-```
+```coffeescript
 document.addEventListener 'photoAssetsChanged', ({details})->
   {collection, offset, limit, assets} = details
   {collectionKey, collectionName, estimatedAssetCount} = collection
 
+  firstAsset = assets[0]
   {
     assetKey
     thumbnailUrl
@@ -145,19 +151,19 @@ document.addEventListener 'photoAssetsChanged', ({details})->
     mediaType
     creationDate
     modificationDate
-  } = assets[0]
+  } = firstAsset
 ```
 
 The event object's ```details```:
 
-* collection: information about the current collection in the same format as returned by ```getCollections```
+* collection: information about the current collection in the same format as returned by ```PhotoAssets.getCollections```
 * offset: the current offset for the data-window
 * limit: the current size of the data-window
 * assets: an array of assets <= limit in length
 
 The asset objects have the following fields:
 
-* assetKey: used in ```PhotoAssets.getPhoto assetKey: 'abc123', ...``` to retrieve high resolution versions of the asset
+* assetKey: unique identifier for the asset. Required for ```PhotoAssets.getPhoto```.
 * thumbnailUrl: the URL of the immediately-available copy of the thumbnail for this asset
 * thumbnailPixelWidth, thumbnailPixelHeight: size of the thumbnail image
 * originalPixelWidth, originalPixelHeight: size of the original image
