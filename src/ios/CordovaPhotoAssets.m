@@ -14,7 +14,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 @property NSUInteger thumbnailQuality;
 @property NSUInteger limit;
 @property NSUInteger thumbnailSize;
-@property NSString *currentAssetCollection;
+@property NSString *currentCollectionKey;
 @property NSString *localStoragePath;
 @property PHImageManager *imageManager;
 @property NSMutableArray *monitoredAssets;
@@ -32,7 +32,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     self.limit = 100;
     self.thumbnailSize = 270; // big enough for max thumbnailQuality on iphone6+ at 4 per line (portrait) (iphone6+ device-pixel-width: 1080)
     self.thumbnailQuality = 95;
-    self.currentAssetCollection = nil;
+    self.currentCollectionKey = nil;
 
     self.imageManager = [PHImageManager defaultManager];
     self.monitoredAssets = [NSMutableArray new];
@@ -66,7 +66,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
         [results setObject:[NSNumber numberWithLong:self.offset] forKey:@"offset"];
         [results setObject:[NSNumber numberWithLong:self.thumbnailQuality] forKey:@"thumbnailQuality"];
         [results setObject:[NSNumber numberWithLong:self.thumbnailSize] forKey:@"thumbnailSize"];
-        [results setObject:self.currentAssetCollection forKey:@"currentAssetCollection"];
+        [results setObject:self.currentCollectionKey forKey:@"currentCollectionKey"];
 
         pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
 
@@ -123,11 +123,11 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
             }
         }
 
-        // currentAssetCollection
-        if ((nsString = [options objectForKey:@"currentAssetCollection"])) {
-            if (nsString != self.currentAssetCollection) {
+        // currentCollectionKey
+        if ((nsString = [options objectForKey:@"currentCollectionKey"])) {
+            if (nsString != self.currentCollectionKey) {
                 thumbnailOptionsChanged = YES;
-                self.currentAssetCollection = nsString;
+                self.currentCollectionKey = nsString;
             }
         }
 
@@ -193,7 +193,7 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 {
     NSMutableArray *newAssets;
 
-    if (self.currentAssetCollection == allImageAssetsKey) {
+    if (self.currentCollectionKey == allImageAssetsKey) {
         newAssets = [self _enumerateAllAssets];
     } else {
         // follow specific assets, collectionKey must be a valid iOS localIdentifier
@@ -262,7 +262,8 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 }
 
 - (NSString *)_thumbnailFilePathForAsset:(PHAsset *)asset {
-    return [NSString stringWithFormat:@"%@/thumbnail_%@.jpg", self.localStoragePath, asset.localIdentifier];
+    NSUInteger lastModifiedAgeInSeconds = asset.modificationDate.timeIntervalSince1970;
+    return [NSString stringWithFormat:@"%@/thumbnail_%@_%lu.jpg", self.localStoragePath, asset.localIdentifier, (unsigned long)lastModifiedAgeInSeconds];
 }
 
 - (NSString *)_writeThumbnail:(UIImage *)image toFilePath:(NSString *)filePath
@@ -335,16 +336,16 @@ NSArray *_enumerateCollections()
     __block NSMutableArray *outputArray = [NSMutableArray new];
 
     NSMutableDictionary *outputCollection = [NSMutableDictionary new];
-    [outputCollection setObject:allImageAssetsKey   forKey:@"id"];
-    [outputCollection setObject:@"Camera Roll"      forKey:@"title"];
-    [outputCollection setObject:[NSNumber numberWithInteger:_allPhotoAssetsCount()] forKey:@"count"];
+    [outputCollection setObject:allImageAssetsKey   forKey:@"collectionKey"];
+    [outputCollection setObject:@"Camera Roll"      forKey:@"collectionName"];
+    [outputCollection setObject:[NSNumber numberWithInteger:_allPhotoAssetsCount()] forKey:@"estimatedAssetCount"];
     [outputArray addObject:outputCollection];
 
-    [userAlbums enumerateObjectsUsingBlock:^(PHAssetCollection *currentAssetCollection, NSUInteger idx, BOOL *stop) {
+    [userAlbums enumerateObjectsUsingBlock:^(PHAssetCollection *currentCollectionKey, NSUInteger idx, BOOL *stop) {
         NSMutableDictionary *outputCollection = [NSMutableDictionary new];
-        [outputCollection setObject:currentAssetCollection.localIdentifier  forKey:@"id"];
-        [outputCollection setObject:currentAssetCollection.localizedTitle   forKey:@"title"];
-        [outputCollection setObject:[NSNumber numberWithInteger:currentAssetCollection.estimatedAssetCount] forKey:@"count"];
+        [outputCollection setObject:currentCollectionKey.localIdentifier  forKey:@"collectionKey"];
+        [outputCollection setObject:currentCollectionKey.localizedTitle   forKey:@"collectionName"];
+        [outputCollection setObject:[NSNumber numberWithInteger:currentCollectionKey.estimatedAssetCount] forKey:@"estimatedAssetCount"];
         [outputArray addObject:outputCollection];
     }];
     NSLog(@"outputArray: %@", outputArray);
