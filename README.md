@@ -96,7 +96,7 @@ PhotoAssets.getOptions successCallback, errorCallback
 successCallback: (options) ->
 ```
 
-Returns the current value for all options as an ```options``` object.
+Returns, via successCallback, the current value for all options as an ```options``` object.
 
 #### getPhoto
 
