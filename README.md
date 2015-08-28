@@ -1,7 +1,7 @@
 # cordova_photo_assets
 Cordova Plugin for Accessing the Photo Assets on iOS and eventually Android
 
-## API
+## Examples
 
 ### Simple Example
 
@@ -50,7 +50,7 @@ document.addEventListener 'photoAssetsChanged', ({details})->
   # see previous example or API doc
 ```
 
-### PhotoAssets API DETAILS
+## PhotoAssets API
 
 #### getCollections
 ```coffeescript
@@ -97,62 +97,48 @@ Returns, via successCallback, the current value for all options as an ```options
 
 ```coffeescript
 PhotoAssets.getPhoto
-  assetKey: "string" # required - see photoAssetsChanged
-  maxSize:  123      # width and height <= maxSize. default: no max
-  temporaryFilename: "string" # see below. default: nil
+  assetKey:          "string" # required - see photoAssetsChanged
+  maxSize:           123      # width and height <= maxSize. default: no max
+  quality:           95       # 0 to 100 JPG quality. default: 95
 , successCallback, errorCallback
 
 successCallback: ({
-  photoUrl,
-  pixelWidth,
-  pixelHeight,
-  originalPixelWidth,
-  originalPixelHeight
+  assetKey            # unique key for this asset
+  photoUrl            # link to the app-local image file
+  pixelWidth          # width of the app-local image file
+  pixelHeight         # height of the app-local image file
+  originalPixelWidth  # width of the original asset
+  originalPixelHeight # height of the original asset
 }) ->
 ```
 
-```temporaryFilename```
-
-If the name is the same as a previous call, the previous image is overwritten. This is handy so you don't end up with lots of temporary files wasting the users's storage.
+This call fetches a photo given its ```assetKey```. Asset keys are provided via ```photoAssetsChanged``` events. On success, a version of the photo asset has been writen to app-local storage and is accessable via ```photoUrl```. This temporary file is unique to this call and will stick around until the next time the plugin is initialized - sometime after the next app start.
 
 #### photoAssetsChanged event
 
 ```coffeescript
 document.addEventListener 'photoAssetsChanged', ({details})->
-  {options, collections, assets} = details
-
-  {currentCollectionKey, offset, limit} = options
-
-  currentCollection = collections[currentCollectionKey]
-  {collectionKey, collectionName, estimatedAssetCount} = currentCollection
+  {
+    options             # same object returned by getOptions
+    collections         # same object returned by getCollections
+    assets              # array of all assets in the current window with valid thumbnails
+  } = details
 
   [{
-    assetKey
-    thumbnailUrl
-    thumbnailPixelWidth
-    thumbnailPixelHeight
-    originalPixelWidth
-    originalPixelHeight
-    creationDate
-    modificationDate
+    assetKey            # unique key for this asset
+    photoUrl            # url to fetch the thumbnail photo
+    pixelWidth          # width of the thumbnail
+    pixelHeight         # height of the thumbnail
+    originalPixelWidth  # width of the original asset
+    originalPixelHeight # height of the original asset
   }] = assets
 ```
 
-The event object's ```details```:
+## Notes
 
-* collections: same object returned by getCollections
-* options: same object returned by getOptions
-* assets: an array of assets. assets.length <= limit
+### Temporary Files
 
-The asset objects have the following fields:
-
-* assetKey: unique identifier for the asset. Required for ```getPhoto```.
-  * Ex use: ```PhotoAssets.getPhoto assetKey: assetKey```.
-* thumbnailUrl: the URL of the immediately-available copy of the thumbnail for this asset
-* thumbnailPixelWidth, thumbnailPixelHeight: size of the thumbnail image
-* originalPixelWidth, originalPixelHeight: size of the original image
-* creationDate: string
-* modificationDate: string
+This plugin creates temporary files in its own temporary folder. Each time the plugin is initialized, it deletes all existing temporary files. Plugin init happens on the first API call.
 
 # Future
 

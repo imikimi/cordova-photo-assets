@@ -4,6 +4,7 @@
 #import <pthread.h>
 
 NSString *allImageAssetsKey = @"all";
+NSString *localStorageSubdir = @"CordovaPhotoAssets";
 pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 
 // Very helpful starting place:
@@ -25,6 +26,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 @implementation CordovaPhotoAssets
 
 - (void)pluginInitialize {
+    NSLog(@"CordovaPhotoAssets initializing...");
 
     pthread_mutex_init(&cordovaPhotoAssetsSingletonMutex, NULL);
 
@@ -39,9 +41,10 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     self.monitoredAssetsByKey = [NSMutableDictionary new];
 
     [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:self]; //(id<PHPhotoLibraryChangeObserver>)
+    [self _initLocalStoragePath];
 
+    NSLog(@"CordovaPhotoAssets initialized.");
     //TODO: make a subdirectory and delete all files in it here, on init
-    self.localStoragePath = [NSTemporaryDirectory() stringByStandardizingPath];
 }
 
 - (void)getCollections:(CDVInvokedUrlCommand*)command
@@ -136,6 +139,64 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     }];
 }
 
+// NOTE: we can get all the EXIF data if we fetch the full-sized image.
+// The returned CIImage has a properties field with this data.
+// http://stackoverflow.com/questions/24462112/ios-8-photos-framework-access-photo-metadata
+- (void)getPhoto:(CDVInvokedUrlCommand*)command
+{
+    [self.commandDelegate runInBackground:^{
+        NSDictionary* options = [[command arguments] objectAtIndex:0];
+        CDVPluginResult* pluginResult = nil;
+
+        NSString *assetKey = [options objectForKey:@"assetKey"];
+
+        NSInteger maxSize = 0;
+        NSNumber *maxSizeNSN = nil;
+        if ((maxSizeNSN = (NSNumber *)[options objectForKey:@"maxSize"])) {
+            maxSize = maxSizeNSN.integerValue;
+        }
+
+        NSInteger quality = 95;
+        NSNumber *qualityNSN = nil;
+        if ((qualityNSN = (NSNumber *)[options objectForKey:@"quality"])) {
+            quality = qualityNSN.integerValue;
+            if (quality < 0) quality = 0;
+            if (quality > 100) quality = 100;
+        }
+
+        PHAsset *asset = assetFromKey(assetKey);
+
+        if (!asset) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[NSString stringWithFormat:@"asset not found for assetKey: %@", assetKey]];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+        } else {
+            CGSize size = PHImageManagerMaximumSize;
+            if (maxSize > 0) {
+                size.height = size.width = maxSize;
+            }
+            NSMutableDictionary *fetchedProps = [self _fetchAsset:asset targetSize:size withQuality:quality];
+
+            if (fetchedProps)
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:fetchedProps];
+            else
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[NSString stringWithFormat:@"failed to load asset for assetKey: %@ and width %d and heigh %d", assetKey, (int)size.width, (int)size.height]];
+        }
+
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }];
+}
+
+PHAsset *assetFromKey(NSString *assetKey) {
+    PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithLocalIdentifiers:[NSArray arrayWithObject:assetKey] options:nil];
+
+    if (allPhotosResult.count < 1) {
+        NSLog(@"assetFromKey: asset not found for %@", assetKey);
+        return nil;
+    }
+
+    return (PHAsset *)[allPhotosResult objectAtIndex:0];
+}
+
 
 /**************************************************
  INTERFACE IMPLEMENTATIONS
@@ -154,6 +215,47 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 /**************************************************
  PRIVATE
  **************************************************/
+
+- (void)_deleteAllFilesInLocalStorage {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSDirectoryEnumerator *dirEnum = [fileManager enumeratorAtPath:self.localStoragePath];
+
+    NSLog(@"cleaning up all files in localStoragePath: %@", self.localStoragePath);
+    NSString *file;
+    NSString *filePath;
+    NSError *err = nil;
+    while ((file = [dirEnum nextObject])) {
+        filePath = [NSString stringWithFormat:@"%@/%@", self.localStoragePath, file];
+        NSLog(@"deleting: %@", file);
+        if (![fileManager removeItemAtPath:filePath error:&err]) {
+            NSLog(@"Error removing temporary file: %@. Error: %@", file, [err localizedDescription]);
+        }
+    }
+}
+
+- (void)_initLocalStoragePath {
+    self.localStoragePath = [[NSString stringWithFormat:@"%@/%@", NSTemporaryDirectory(), localStorageSubdir] stringByStandardizingPath];
+
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    BOOL isDir = false;
+    if ([fileManager fileExistsAtPath:self.localStoragePath isDirectory:&isDir] && isDir) {
+        NSLog(@"localStoragePath already exists: %@", self.localStoragePath);
+        [self _deleteAllFilesInLocalStorage];
+        return;
+    }
+
+    NSLog(@"creating localStoragePath: %@", self.localStoragePath);
+    NSError *err = nil;
+    if (![fileManager
+          createDirectoryAtPath: self.localStoragePath
+          withIntermediateDirectories: YES
+          attributes: nil
+          error: &err]) {
+        NSLog(@"Error creating localStoragePath: %@. Error: %@", self.localStoragePath, [err localizedDescription]);
+        return;
+    }
+}
+
 
 - (NSMutableDictionary *)_getOptionsAsDictionary {
     NSMutableDictionary *results = [NSMutableDictionary new];
@@ -175,15 +277,15 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     NSData *jsonData = [NSJSONSerialization dataWithJSONObject: details options: 0 error: &error];
 
     if (!jsonData) {
-        NSLog(@"CordovaPhotoAssets DispatchEvent '%@': INTERNAL ERROR converting 'details' to json: %@", eventType, error);
+        NSLog(@"CordovaPhotoAssets DispatchEvent '%@': INTERNAL ERROR converting 'details' to json: %@", eventType, [error localizedDescription]);
         return;
     }
 
     NSString *jsonString = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
-    NSLog(@"CordovaPhotoAssets DispatchEvent '%@': jsonString: %@", eventType, jsonString);
+    //    NSLog(@"CordovaPhotoAssets DispatchEvent '%@': jsonString: %@", eventType, jsonString);
 
     NSString *javascript = [NSString stringWithFormat:@"document.dispatchEvent(new CustomEvent('%@', {detail:%@}));", eventType, jsonString];
-    NSLog(@"CordovaPhotoAssets DispatchEvent '%@': invoking javascript: %@", eventType, javascript);
+    //    NSLog(@"CordovaPhotoAssets DispatchEvent '%@': invoking javascript: %@", eventType, javascript);
 
     [self.commandDelegate evalJs: javascript scheduledOnRunLoop: true];
 }
@@ -287,16 +389,16 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     return [NSString stringWithFormat:@"%@/thumbnail_%@_%lu.jpg", self.localStoragePath, pathFriendlyIdentifier, (unsigned long)lastModifiedAgeInSeconds];
 }
 
-- (NSString *)_writeThumbnail:(UIImage *)image toFilePath:(NSString *)filePath
+- (NSString *)_writeImage:(UIImage *)image toFilePath:(NSString *)filePath withQuality:(NSInteger)quality
 {
-    NSData *data = UIImageJPEGRepresentation(image, self.thumbnailQuality/100.0f);
+    NSData *data = UIImageJPEGRepresentation(image, quality/100.0f);
 
     if (!data) {
         NSLog(@"error generating jpg for thumbnail: width:%d height:%d filePath:%@", (int)image.size.width, (int)image.size.height, filePath);
         return nil;
     }
 
-    NSError* err = nil;
+    NSError *err = nil;
     BOOL success = [data writeToFile:filePath options:NSAtomicWrite error:&err];
     if (!success) {
         NSLog(@"error writing thumbnail: %@ error: %@", filePath, [err localizedDescription]);
@@ -317,29 +419,40 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     CGSize size;
     size.height = size.width = self.thumbnailSize;
     [assetList enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
-        [self.imageManager
-         requestImageForAsset:  asset
-         targetSize:            size
-         contentMode:           PHImageContentModeAspectFill
-         options:               requestOptions
-         resultHandler:^(UIImage *image, NSDictionary *info) {
-             NSLog(@"requestImage result: %dx%d", (int)image.size.width, (int)image.size.height);
-             NSString *filePath = [self _writeThumbnail:image toFilePath:[self _thumbnailFilePathForAsset:asset]];
-             if (filePath) {
-                 NSMutableDictionary *props = [NSMutableDictionary new];
-                 [props setObject:filePath              forKey:@"thumbnailUrl"];
-                 [props setObject:asset.localIdentifier forKey:@"assetKey"];
-                 [props setObject:[NSNumber numberWithInt:image.size.width] forKey:@"thumbnailPixelWidth"];
-                 [props setObject:[NSNumber numberWithInt:image.size.height] forKey:@"thumbnailPixelHeight"];
-                 [props setObject:[NSNumber numberWithInt:(int)asset.pixelWidth] forKey:@"originalPixelWidth"];
-                 [props setObject:[NSNumber numberWithInt:(int)asset.pixelHeight] forKey:@"originalPixelHeight"];
-//                 [props setObject:asset.creationDate forKey:@"creationDate"];
-//                 [props setObject:asset.modificationDate forKey:@"modificationDate"];
-                 [outputAssets addObject:props];
-             }
-         }];
+        NSMutableDictionary *props = [self _fetchAsset:asset targetSize:size withQuality:self.thumbnailQuality];
+        if (props) [outputAssets addObject:props];
     }];
     return outputAssets;
+}
+
+- (NSMutableDictionary *)_fetchAsset:(PHAsset *)asset targetSize:(CGSize)size withQuality:(NSInteger)quality {
+    PHImageRequestOptions *requestOptions = [PHImageRequestOptions new];
+    requestOptions.synchronous = true;
+    requestOptions.deliveryMode = PHImageRequestOptionsDeliveryModeFastFormat;
+    requestOptions.resizeMode = PHImageRequestOptionsResizeModeFast;
+
+    NSMutableDictionary __block *props = nil;
+
+    [self.imageManager
+     requestImageForAsset:  asset
+     targetSize:            size
+     contentMode:           PHImageContentModeAspectFill
+     options:               requestOptions
+     resultHandler:^(UIImage *image, NSDictionary *info) {
+         NSString *filePath = [self _writeImage:image toFilePath:[self _thumbnailFilePathForAsset:asset] withQuality:quality];
+         if (filePath) {
+             props = [NSMutableDictionary new];
+             [props setObject:filePath              forKey:@"photoUrl"];
+             [props setObject:asset.localIdentifier forKey:@"assetKey"];
+             [props setObject:[NSNumber numberWithInt:image.size.width] forKey:@"pixelWidth"];
+             [props setObject:[NSNumber numberWithInt:image.size.height] forKey:@"pixelHeight"];
+             [props setObject:[NSNumber numberWithInt:(int)asset.pixelWidth] forKey:@"originalPixelWidth"];
+             [props setObject:[NSNumber numberWithInt:(int)asset.pixelHeight] forKey:@"originalPixelHeight"];
+             //                 [props setObject:asset.creationDate forKey:@"creationDate"];
+             //                 [props setObject:asset.modificationDate forKey:@"modificationDate"];
+         }
+     }];
+    return props;
 }
 
 - (NSMutableArray *)_enumerateAllAssets
@@ -388,7 +501,6 @@ NSArray *_enumerateCollections()
         [outputCollection setObject:[NSNumber numberWithInteger:currentCollectionKey.estimatedAssetCount] forKey:@"estimatedAssetCount"];
         [outputArray addObject:outputCollection];
     }];
-    NSLog(@"outputArray: %@", outputArray);
 
     return outputArray;
 }
