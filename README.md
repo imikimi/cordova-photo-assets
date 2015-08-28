@@ -96,7 +96,11 @@ Returns, via successCallback, the current value for all options as an ```options
 #### getPhoto
 
 ```coffeescript
-PhotoAssets.getPhoto options, successCallback, errorCallback
+PhotoAssets.getPhoto
+  assetKey: "string" # required - see photoAssetsChanged
+  maxSize:  123      # width and height <= maxSize. default: no max
+  temporaryFilename: "string" # see below. default: nil
+, successCallback, errorCallback
 
 successCallback: ({
   photoUrl,
@@ -107,11 +111,9 @@ successCallback: ({
 }) ->
 ```
 
-Options:
+```temporaryFilename```
 
-* assetKey:           (required) the key of the asset you want the photo for
-* maxSize:            (pixels)
-* temporaryFilename:  If the name is the same as a previous call, the previous image is overwritten. This is handy so you don't end up with lots of temporary files wasting the users's storage.
+If the name is the same as a previous call, the previous image is overwritten. This is handy so you don't end up with lots of temporary files wasting the users's storage.
 
 #### photoAssetsChanged event
 
