@@ -308,16 +308,22 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 
 - (NSMutableArray *)_createThumbnailsForAssets:(NSArray *)assetList
 {
+    PHImageRequestOptions *requestOptions = [PHImageRequestOptions new];
+    requestOptions.synchronous = true;
+    requestOptions.deliveryMode = PHImageRequestOptionsDeliveryModeFastFormat;
+    requestOptions.resizeMode = PHImageRequestOptionsResizeModeFast;
+
     NSMutableArray *outputAssets = [NSMutableArray new];
     CGSize size;
     size.height = size.width = self.thumbnailSize;
     [assetList enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
         [self.imageManager
-         requestImageForAsset: asset
-         targetSize: size
-         contentMode: PHImageContentModeAspectFill
-         options:NULL
+         requestImageForAsset:  asset
+         targetSize:            size
+         contentMode:           PHImageContentModeAspectFill
+         options:               requestOptions
          resultHandler:^(UIImage *image, NSDictionary *info) {
+             NSLog(@"requestImage result: %dx%d", (int)image.size.width, (int)image.size.height);
              NSString *filePath = [self _writeThumbnail:image toFilePath:[self _thumbnailFilePathForAsset:asset]];
              if (filePath) {
                  NSMutableDictionary *props = [NSMutableDictionary new];
