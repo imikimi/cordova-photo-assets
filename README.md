@@ -5,16 +5,17 @@ Cordova Plugin for Accessing the Photo Assets on iOS and eventually Android
 
 ### Simple Example
 
-This example will list all assets for the first asset-collection found.
+This example will list the first 100 assets.
 
 ```coffeescript
 
 document.addEventListener 'deviceready', ->
-  PhotoAssets.setOptions currentAssetCollection: "all", ->
+  PhotoAssets.setOptions currentAssetCollection: "all", limit: 100, ->
     console.log "all (local) photo assets selected, a photoAssetsChanged event will follow shortly"
 
 document.addEventListener 'photoAssetsChanged', ({details})->
-  {collections, currentCollectionKey, offset, assets} = details
+  {collections, options, assets} = details
+  {currentCollectionKey} = options
   {collectionName} = collections[currentCollectionKey]
 
   console.log "PhotoAssets from Collection: #{collectionName}:"
@@ -70,19 +71,22 @@ Returns, via successCallback, an array of collections with the following propert
 
 #### setOptions
 ```coffeescript
-PhotoAssets.setOptions options, successCallback, errorCallback
-
-successCallback: ->
+PhotoAssets.setOptions
+  # all options and their default values:
+  currentCollectionKey: "all" # (string)
+  offset:               0     # integer >= 0
+  limit:                100   # integer >= 1
+  thumbnailSize:        270   # maximum pixel height or width as an integer
+  thumbnailQuality:     95    # Jpeg quality as an integer between 0 and 100
+, successCallback, errorCallback
 ```
 
-```options``` can be 0, 1 or more of the following. The missing options will not be changed.
+When setting options, all options are optional. Omitted options will be left untouched from their previous value.
 
-* thumbnailSize:        (pixels)
-* thumbnailQuality:     (0-100)
-* limit:                (int >= 1) number of thumbnails to return starting from the current offset.
-* offset:               (int >= 0) current thumbnail offset
-* currentCollectionKey: (string) Use "all" for all local images. Otherwise, get collection keys from getCollections
+Notes:
 
+* Set ```currentCollectionKey``` to ```"all"``` for all local assets. Otherwise, use ```getCollections``` to get a list of all collections and their respective ```collectionKeys```.
+* ```offset``` and ```limit``` define a "window" into the full list of assets for the current selected collection. Thumbnail images are automatically generated for all assets starting at number ```offset``` through asset number ```offset + limit - 1```. Performance test your application to determine the best performing ```limit``` value.
 
 #### getOptions
 ```coffeescript
