@@ -1,0 +1,5 @@
+TODO
+
+- verify that if you set currentCollectionKey BACK to nil it correctly stops following assets and doesn't crash trying to start following collection 'nil'
+
+- add getAssets. I'm not sure if we need this or not, but it would be consistent. Right now photoAssetsChanged returns 3 values and two of the three you can fetch via getOptions and getCollections. Only getAssets can only be retrieved via the photoAssetsChanged. The problem is if you somehow missed the event, there is no way to get them other than awkwardly triggering an update by changin an option that causes the event to be resent.
