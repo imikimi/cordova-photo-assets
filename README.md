@@ -73,7 +73,7 @@ Returns, via successCallback, an array of collections with the following propert
 ```coffeescript
 PhotoAssets.setOptions
   # all options and their default values:
-  currentCollectionKey: "all" # (string)
+  currentCollectionKey: nil   # (string)
   offset:               0     # integer >= 0
   limit:                100   # integer >= 1
   thumbnailSize:        270   # maximum pixel height or width as an integer
@@ -85,7 +85,7 @@ When setting options, all options are optional. Omitted options will be left unt
 
 Notes:
 
-* Set ```currentCollectionKey``` to ```"all"``` for all local assets. Otherwise, use ```getCollections``` to get a list of all collections and their respective ```collectionKeys```.
+* Set ```currentCollectionKey``` to ```"all"``` for all local assets. Set it to ```nil``` to stop all asset monitoring. To select specific collections, use ```getCollections``` to get a list of all collections and their respective ```collectionKeys```.
 * ```offset``` and ```limit``` define a "window" into the full list of assets for the current selected collection. Thumbnail images are automatically generated for all assets starting at number ```offset``` through asset number ```offset + limit - 1```. Performance test your application to determine the best performing ```limit``` value.
 
 #### getOptions
