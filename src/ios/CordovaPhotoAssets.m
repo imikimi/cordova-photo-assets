@@ -359,9 +359,12 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 - (NSMutableArray *)_getOutputAssetArray {
     NSMutableArray *result = [NSMutableArray new];
     [self.assetKeysInWindow enumerateObjectsUsingBlock:^(NSString *key, NSUInteger idx, BOOL *stop) {
-        id obj = [self.outputAssetsByKey objectForKey:key];
-        if (!obj) obj = [NSNull new];
-        [result addObject:obj];
+        id outputAsset = [self.outputAssetsByKey objectForKey:key];
+        if (!outputAsset) {
+            outputAsset = [NSMutableDictionary new];
+            _populateOutputAsset([self.assetsByKey objectForKey:key], outputAsset);
+        }
+        [result addObject:outputAsset];
     }];
     return result;
 }
@@ -601,7 +604,10 @@ UIImage *fixOrientation(UIImage *image) {
     }];
 }
 
-- (void)_updateOutputAsset:(NSDictionary *)outputAsset forKey:(NSString *)key {
+void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
+    [outputAsset setObject:asset.localIdentifier forKey:@"assetKey"];
+    [outputAsset setObject:[NSNumber numberWithInt:(int)asset.pixelWidth] forKey:@"originalPixelWidth"];
+    [outputAsset setObject:[NSNumber numberWithInt:(int)asset.pixelHeight] forKey:@"originalPixelHeight"];
 }
 
 - (NSMutableDictionary *)_fetchAsset:(PHAsset *)asset targetSize:(CGSize)size withQuality:(NSInteger)quality {
@@ -622,11 +628,9 @@ UIImage *fixOrientation(UIImage *image) {
          if (filePath) {
              props = [NSMutableDictionary new];
              [props setObject:filePath              forKey:@"photoUrl"];
-             [props setObject:asset.localIdentifier forKey:@"assetKey"];
              [props setObject:[NSNumber numberWithInt:image.size.width] forKey:@"pixelWidth"];
              [props setObject:[NSNumber numberWithInt:image.size.height] forKey:@"pixelHeight"];
-             [props setObject:[NSNumber numberWithInt:(int)asset.pixelWidth] forKey:@"originalPixelWidth"];
-             [props setObject:[NSNumber numberWithInt:(int)asset.pixelHeight] forKey:@"originalPixelHeight"];
+             _populateOutputAsset(asset, props);
              //                 [props setObject:asset.creationDate forKey:@"creationDate"];
              //                 [props setObject:asset.modificationDate forKey:@"modificationDate"];
          }

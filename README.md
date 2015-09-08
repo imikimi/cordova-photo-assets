@@ -130,13 +130,17 @@ document.addEventListener 'photoAssetsChanged', ({details})->
 
   [{
     assetKey            # unique key for this asset
+    originalPixelWidth  # width of the original asset
+    originalPixelHeight # height of the original asset
+
+    # properties which are set once the thumbnail is generated
     photoUrl            # url to fetch the thumbnail photo
     pixelWidth          # width of the thumbnail
     pixelHeight         # height of the thumbnail
-    originalPixelWidth  # width of the original asset
-    originalPixelHeight # height of the original asset
   }] = assets
 ```
+
+Thumbnails are generated using a thread-pool. Many ```photoAssetsChanged``` events will be fired as thumbnails are generated. Most of the data in the event is valid. Elements in the ```assets``` array may not have all their fields set until their individual thumbnails have been generated. If ```photoUrl``` is set, it points to a valid thumbnail image. 
 
 ## Notes
 
