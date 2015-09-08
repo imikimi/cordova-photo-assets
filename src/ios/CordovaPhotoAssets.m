@@ -31,10 +31,10 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     pthread_mutex_init(&cordovaPhotoAssetsSingletonMutex, NULL);
 
     self.offset = 0;
-    self.limit = 100;
+    self.limit = 50;
     self.thumbnailSize = 270; // big enough for max thumbnailQuality on iphone6+ at 4 per line (portrait) (iphone6+ device-pixel-width: 1080)
     self.thumbnailQuality = 95;
-    self.currentCollectionKey = nil;
+    self.currentCollectionKey = @"";
 
     self.imageManager = [PHImageManager defaultManager];
     self.monitoredAssets = [NSMutableArray new];
@@ -73,68 +73,124 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     }];
 }
 
+void _validateNumberOption
+(
+ NSMutableArray *errorsOut,
+ NSDictionary *options,
+ NSString *key,
+ NSInteger minValue,
+ NSInteger maxValue
+ )
+{
+    NSNumber *nsNumber;
+    if ((nsNumber = [options objectForKey:key])) {
+        if ([nsNumber isKindOfClass:[NSNumber class]]) {
+            NSInteger value = nsNumber.integerValue;
+            if (value < minValue || value > maxValue) {
+                [errorsOut addObject:[NSString
+                                      stringWithFormat:@"Invalid value for %@: %ld. Expected integer in the range [%ld, %ld].",
+                                      key,
+                                      (long)value,
+                                      (long)minValue,
+                                      (long)maxValue
+                                      ]];
+            }
+        }
+        else [errorsOut addObject:[NSString stringWithFormat:@"Invalid value for %@. Expected a number.", key]];
+    }
+}
+
+void _validateStringOption
+(
+ NSMutableArray *errorsOut,
+ NSDictionary *options,
+ NSString *key
+ )
+{
+    NSString *nsString;
+    if ((nsString = [options objectForKey:key])) {
+        if (![nsString isKindOfClass:[NSString class]])
+            [errorsOut addObject:[NSString stringWithFormat:@"Invalid value for %@. Expected a string.", key]];
+    }
+}
+
 - (void)setOptionsFromJavascript:(CDVInvokedUrlCommand*)command
 {
     [self.commandDelegate runInBackground:^{
-        pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
+        NSMutableArray *errors = [NSMutableArray new];
         NSDictionary* options = [[command arguments] objectAtIndex:0];
+        CDVPluginResult* pluginResult = nil;
 
-        NSString *nsString;
-        NSNumber *nsNumber;
-        BOOL thumbnailOptionsChanged = NO;
-        BOOL collectionRangeChanged = NO;
+        _validateNumberOption(errors, options, @"limit", 1, 1000);
+        _validateNumberOption(errors, options, @"offset", 0, 1000000000);
+        _validateNumberOption(errors, options, @"thumbnailQuality", 0, 100);
+        _validateNumberOption(errors, options, @"thumbnailSize", 1, 10000);
+        _validateStringOption(errors, options, @"currentCollectionKey");
 
-        // limit
-        if ((nsNumber = [options objectForKey:@"limit"])) {
-            NSUInteger limit = nsNumber.unsignedIntegerValue;
-            if (limit != self.limit) {
-                collectionRangeChanged = YES;
-                self.limit = limit;
+        if (errors.count > 0) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsArray:errors];
+        } else {
+
+            pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
+
+            NSString *nsString;
+            NSNumber *nsNumber;
+            BOOL thumbnailOptionsChanged = NO;
+            BOOL collectionRangeChanged = NO;
+
+            // limit
+            if ((nsNumber = [options objectForKey:@"limit"])) {
+                NSUInteger limit = nsNumber.unsignedIntegerValue;
+                if (limit != self.limit) {
+                    collectionRangeChanged = YES;
+                    self.limit = limit;
+                }
             }
-        }
 
-        // offset
-        if ((nsNumber = [options objectForKey:@"offset"])) {
-            NSUInteger offset = nsNumber.unsignedIntegerValue;
-            if (offset != self.offset) {
-                collectionRangeChanged = YES;
-                self.offset = offset;
+            // offset
+            if ((nsNumber = [options objectForKey:@"offset"])) {
+                NSUInteger offset = nsNumber.unsignedIntegerValue;
+                if (offset != self.offset) {
+                    collectionRangeChanged = YES;
+                    self.offset = offset;
+                }
             }
-        }
 
-        // thumbnailQuality
-        if ((nsNumber = [options objectForKey:@"thumbnailQuality"])) {
-            NSUInteger thumbnailQuality = nsNumber.unsignedIntegerValue;
-            if (thumbnailQuality > 100) thumbnailQuality = 100;
-            if (thumbnailQuality != self.thumbnailQuality) {
-                thumbnailOptionsChanged = YES;
-                self.offset = thumbnailQuality;
+            // thumbnailQuality
+            if ((nsNumber = [options objectForKey:@"thumbnailQuality"])) {
+                NSUInteger thumbnailQuality = nsNumber.unsignedIntegerValue;
+                if (thumbnailQuality > 100) thumbnailQuality = 100;
+                if (thumbnailQuality != self.thumbnailQuality) {
+                    thumbnailOptionsChanged = YES;
+                    self.offset = thumbnailQuality;
+                }
             }
-        }
 
-        // thumbnailSize
-        if ((nsNumber = [options objectForKey:@"thumbnailSize"])) {
-            NSUInteger thumbnailSize = nsNumber.unsignedIntegerValue;
-            if (thumbnailSize != self.thumbnailSize) {
-                thumbnailOptionsChanged = YES;
-                self.thumbnailSize = thumbnailSize;
+            // thumbnailSize
+            if ((nsNumber = [options objectForKey:@"thumbnailSize"])) {
+                NSUInteger thumbnailSize = nsNumber.unsignedIntegerValue;
+                if (thumbnailSize != self.thumbnailSize) {
+                    thumbnailOptionsChanged = YES;
+                    self.thumbnailSize = thumbnailSize;
+                }
             }
-        }
 
-        // currentCollectionKey
-        if ((nsString = [options objectForKey:@"currentCollectionKey"])) {
-            if (nsString != self.currentCollectionKey) {
-                thumbnailOptionsChanged = YES;
-                self.currentCollectionKey = nsString;
+            // currentCollectionKey
+            if ((nsString = [options objectForKey:@"currentCollectionKey"])) {
+                if (nsString != self.currentCollectionKey) {
+                    thumbnailOptionsChanged = YES;
+                    self.currentCollectionKey = nsString;
+                }
             }
+
+            if (thumbnailOptionsChanged || collectionRangeChanged) {
+                [self _updateThumbnailsAndThumbnailOptionsChanged: thumbnailOptionsChanged];
+            }
+
+            pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
         }
 
-        if (thumbnailOptionsChanged || collectionRangeChanged) {
-            [self _updateThumbnailsAndThumbnailOptionsChanged: thumbnailOptionsChanged];
-        }
-
-        pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
-        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
     }];
 }
@@ -301,9 +357,14 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 - (void)_sendUpdateEventWithAssets:(NSArray *)outputAssets
 {
     NSMutableDictionary *details = [NSMutableDictionary new];
-    [details setObject:_enumerateCollections()          forKey:@"collections"];
+    NSArray *collections = _enumerateCollections();
+    id currentCollection = _findCollection(collections, self.currentCollectionKey);
+    if (!currentCollection) currentCollection = [NSNull new];
+
+    [details setObject:collections                      forKey:@"collections"];
     [details setObject:[self _getOptionsAsDictionary]   forKey:@"options"];
     [details setObject:outputAssets                     forKey:@"assets"];
+    [details setObject:currentCollection                forKey:@"currentCollection"];
 
     [self _dispatchEventType:@"photoAssetsChanged" withDetails:details];
 }
@@ -311,11 +372,16 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 - (void)_updateThumbnailsAndThumbnailOptionsChanged:(BOOL)thumbnailOptionsChanged
 {
     NSMutableArray *newAssets;
+    NSString *currentCollectionKey = self.currentCollectionKey;
 
-    if ([self.currentCollectionKey isEqualToString:allImageAssetsKey]) {
+    if (currentCollectionKey && [currentCollectionKey isEqualToString:allImageAssetsKey]) {
         newAssets = [self _enumerateAllAssets];
     } else {
-        // follow specific assets, collectionKey must be a valid iOS localIdentifier
+        // TODO:
+        //   * find the collection which matches currentCollectionKey
+        //   * if none match, then we consider it an empty collection (not an error) and return an empty set of assets
+        //   * if we found a valid collection, enumerate its assets within the selected window
+        newAssets = [NSMutableArray new];
     }
 
     NSMutableArray *addedAssets = nil;
@@ -389,8 +455,92 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     return [NSString stringWithFormat:@"%@/thumbnail_%@_%lu.jpg", self.localStoragePath, pathFriendlyIdentifier, (unsigned long)lastModifiedAgeInSeconds];
 }
 
+
+UIImage *fixOrientation(UIImage *image) {
+
+    // No-op if the orientation is already correct
+    if (image.imageOrientation == UIImageOrientationUp) return image;
+
+    // We need to calculate the proper transformation to make the image upright.
+    // We do it in 2 steps: Rotate if Left/Right/Down, and then flip if Mirrored.
+    CGAffineTransform transform = CGAffineTransformIdentity;
+
+    switch (image.imageOrientation) {
+        case UIImageOrientationDown:
+        case UIImageOrientationDownMirrored:
+            transform = CGAffineTransformTranslate(transform, image.size.width, image.size.height);
+            transform = CGAffineTransformRotate(transform, M_PI);
+            break;
+
+        case UIImageOrientationLeft:
+        case UIImageOrientationLeftMirrored:
+            transform = CGAffineTransformTranslate(transform, image.size.width, 0);
+            transform = CGAffineTransformRotate(transform, M_PI_2);
+            break;
+
+        case UIImageOrientationRight:
+        case UIImageOrientationRightMirrored:
+            transform = CGAffineTransformTranslate(transform, 0, image.size.height);
+            transform = CGAffineTransformRotate(transform, -M_PI_2);
+            break;
+        case UIImageOrientationUp:
+        case UIImageOrientationUpMirrored:
+            break;
+    }
+
+    switch (image.imageOrientation) {
+        case UIImageOrientationUpMirrored:
+        case UIImageOrientationDownMirrored:
+            transform = CGAffineTransformTranslate(transform, image.size.width, 0);
+            transform = CGAffineTransformScale(transform, -1, 1);
+            break;
+
+        case UIImageOrientationLeftMirrored:
+        case UIImageOrientationRightMirrored:
+            transform = CGAffineTransformTranslate(transform, image.size.height, 0);
+            transform = CGAffineTransformScale(transform, -1, 1);
+            break;
+        case UIImageOrientationUp:
+        case UIImageOrientationDown:
+        case UIImageOrientationLeft:
+        case UIImageOrientationRight:
+            break;
+    }
+
+    // Now we draw the underlying CGImage into a new context, applying the transform
+    // calculated above.
+    CGContextRef ctx = CGBitmapContextCreate(NULL, image.size.width, image.size.height,
+                                             CGImageGetBitsPerComponent(image.CGImage), 0,
+                                             CGImageGetColorSpace(image.CGImage),
+                                             CGImageGetBitmapInfo(image.CGImage));
+    CGContextConcatCTM(ctx, transform);
+    switch (image.imageOrientation) {
+        case UIImageOrientationLeft:
+        case UIImageOrientationLeftMirrored:
+        case UIImageOrientationRight:
+        case UIImageOrientationRightMirrored:
+            // Grr...
+            CGContextDrawImage(ctx, CGRectMake(0,0,image.size.height,image.size.width), image.CGImage);
+            break;
+
+        default:
+            CGContextDrawImage(ctx, CGRectMake(0,0,image.size.width,image.size.height), image.CGImage);
+            break;
+    }
+
+    // And now we just create a new UIImage from the drawing context
+    CGImageRef cgimg = CGBitmapContextCreateImage(ctx);
+    UIImage *img = [UIImage imageWithCGImage:cgimg];
+    CGContextRelease(ctx);
+    CGImageRelease(cgimg);
+    return img;
+}
+
 - (NSString *)_writeImage:(UIImage *)image toFilePath:(NSString *)filePath withQuality:(NSInteger)quality
 {
+    image = fixOrientation(image);
+
+    NSLog(@"image: %dx%d orientation:%d", (int)image.size.width, (int)image.size.height, (int)image.imageOrientation);
     NSData *data = UIImageJPEGRepresentation(image, quality/100.0f);
 
     if (!data) {
@@ -486,7 +636,7 @@ NSArray *_enumerateCollections()
 
     PHFetchResult *userAlbums = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeAlbum subtype:PHAssetCollectionSubtypeAny options:userAlbumsOptions];
 
-    __block NSMutableArray *outputArray = [NSMutableArray new];
+    NSMutableArray *outputArray = [NSMutableArray new];
 
     NSMutableDictionary *outputCollection = [NSMutableDictionary new];
     [outputCollection setObject:allImageAssetsKey   forKey:@"collectionKey"];
@@ -505,6 +655,17 @@ NSArray *_enumerateCollections()
     return outputArray;
 }
 
+NSMutableDictionary *_findCollection(NSArray *collections, NSString *collectionKey) {
+    __block NSMutableDictionary *result = nil;
+    [collections enumerateObjectsUsingBlock:^(NSMutableDictionary *collection, NSUInteger idx, BOOL *stop) {
+        if ([collectionKey isEqualToString:[collection objectForKey:@"collectionKey"]]) {
+            result = collection;
+            *stop = YES;
+        }
+    }];
+    return result;
+}
+
 - (void)_enumeratePhotoAssets
 {
     NSLog(@"fetchAssetsWithMediaType");
@@ -513,7 +674,7 @@ NSArray *_enumerateCollections()
 
     PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:allPhotosOptions];
 
-    NSLog(@"fetchAssetsWithMediaType count=%lu", allPhotosResult.count);
+    NSLog(@"fetchAssetsWithMediaType count=%lu", (unsigned long)allPhotosResult.count);
     __block int limit = 100;
     [allPhotosResult enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
         NSLog(@"asset %@", asset);

@@ -10,13 +10,12 @@ This example will list the first 100 assets.
 ```coffeescript
 
 document.addEventListener 'deviceready', ->
-  PhotoAssets.setOptions currentAssetCollection: "all", limit: 100, ->
+  PhotoAssets.setOptions currentCollectionKey: "all", limit: 100, ->
     console.log "all (local) photo assets selected, a photoAssetsChanged event will follow shortly"
 
 document.addEventListener 'photoAssetsChanged', ({details})->
-  {collections, options, assets} = details
-  {currentCollectionKey} = options
-  {collectionName} = collections[currentCollectionKey]
+  {assets, currentCollection} = details
+  {collectionName} = currentCollection
 
   console.log "PhotoAssets from Collection: #{collectionName}:"
   for asset in assets
@@ -73,7 +72,7 @@ Returns, via successCallback, an array of collections with the following propert
 ```coffeescript
 PhotoAssets.setOptions
   # all options and their default values:
-  currentCollectionKey: nil   # (string)
+  currentCollectionKey: ""    # (string)
   offset:               0     # integer >= 0
   limit:                100   # integer >= 1
   thumbnailSize:        270   # maximum pixel height or width as an integer
@@ -85,7 +84,7 @@ When setting options, all options are optional. Omitted options will be left unt
 
 Notes:
 
-* Set ```currentCollectionKey``` to ```"all"``` for all local assets. Set it to ```nil``` to stop all asset monitoring. To select specific collections, use ```getCollections``` to get a list of all collections and their respective ```collectionKeys```.
+* Set ```currentCollectionKey``` to ```"all"``` for all local assets. Set it to ```""``` to stop all asset monitoring. To select specific collections, use ```getCollections``` to get a list of all collections and their respective ```collectionKeys```.
 * ```offset``` and ```limit``` define a "window" into the full list of assets for the current selected collection. Thumbnail images are automatically generated for all assets starting at number ```offset``` through asset number ```offset + limit - 1```. Performance test your application to determine the best performing ```limit``` value.
 
 #### getOptions
@@ -124,8 +123,9 @@ This call fetches a photo given its ```assetKey```. Asset keys are provided via 
 document.addEventListener 'photoAssetsChanged', ({details})->
   {
     options             # same object returned by getOptions
-    collections         # same object returned by getCollections
+    collections         # same array returned by getCollections
     assets              # array of all assets in the current window with valid thumbnails
+    currentCollection   # object describing the current collection
   } = details
 
   [{
