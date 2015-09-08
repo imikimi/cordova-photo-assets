@@ -18,8 +18,9 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 @property NSString *currentCollectionKey;
 @property NSString *localStoragePath;
 @property PHImageManager *imageManager;
-@property NSMutableArray *monitoredAssets;
-@property NSMutableDictionary *monitoredAssetsByKey;
+@property NSMutableArray *assetKeysInWindow;
+@property NSMutableDictionary *assetsByKey;
+@property NSMutableDictionary *outputAssetsByKey;
 @end
 
 
@@ -37,8 +38,9 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     self.currentCollectionKey = @"";
 
     self.imageManager = [PHImageManager defaultManager];
-    self.monitoredAssets = [NSMutableArray new];
-    self.monitoredAssetsByKey = [NSMutableDictionary new];
+    self.assetKeysInWindow = [NSMutableArray new];
+    self.assetsByKey = [NSMutableDictionary new];
+    self.outputAssetsByKey = [NSMutableDictionary new];
 
     [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:self]; //(id<PHPhotoLibraryChangeObserver>)
     [self _initLocalStoragePath];
@@ -354,7 +356,17 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     return assetsByKey;
 }
 
-- (void)_sendUpdateEventWithAssets:(NSArray *)outputAssets
+- (NSMutableArray *)_getOutputAssetArray {
+    NSMutableArray *result = [NSMutableArray new];
+    [self.assetKeysInWindow enumerateObjectsUsingBlock:^(NSString *key, NSUInteger idx, BOOL *stop) {
+        id obj = [self.outputAssetsByKey objectForKey:key];
+        if (!obj) obj = [NSNull new];
+        [result addObject:obj];
+    }];
+    return result;
+}
+
+- (void)_sendUpdateEvent
 {
     NSMutableDictionary *details = [NSMutableDictionary new];
     NSArray *collections = _enumerateCollections();
@@ -363,7 +375,7 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 
     [details setObject:collections                      forKey:@"collections"];
     [details setObject:[self _getOptionsAsDictionary]   forKey:@"options"];
-    [details setObject:outputAssets                     forKey:@"assets"];
+    [details setObject:[self _getOutputAssetArray]      forKey:@"assets"];
     [details setObject:currentCollection                forKey:@"currentCollection"];
 
     [self _dispatchEventType:@"photoAssetsChanged" withDetails:details];
@@ -384,29 +396,34 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
         newAssets = [NSMutableArray new];
     }
 
-    NSMutableArray *addedAssets = nil;
-    NSMutableArray *removedAssets = nil;
-    NSMutableDictionary *newAssetsByKey = assetsToAssetsByKey(newAssets);
-    NSDictionary *oldAssetsByKey = self.monitoredAssetsByKey;
+    NSMutableDictionary *addedAssetsByKey = nil;
+    NSMutableDictionary *removedAssetsByKey = nil;
+    NSMutableDictionary *oldAssetsByKey = self.assetsByKey;
+
+    self.assetsByKey = assetsToAssetsByKey(newAssets);
+    self.assetKeysInWindow = assetKeysFromAssets(newAssets);
 
     if (thumbnailOptionsChanged) {
-        addedAssets = newAssets;
-        removedAssets = self.monitoredAssets;
+        addedAssetsByKey = self.assetsByKey;
+        removedAssetsByKey = oldAssetsByKey;
     } else {
         // only the range changed, reuse already-rendered/monitored assets where possible
-        addedAssets = [NSMutableArray new];
-        removedAssets = [NSMutableArray new];
+        addedAssetsByKey = [NSMutableDictionary new];
+        removedAssetsByKey = [NSMutableDictionary new];
 
-        [self _splitNewAssets:newAssetsByKey andOldAssets:oldAssetsByKey intoAddedAssets:addedAssets andRemovedAssets:removedAssets];
+        [self
+         _splitNewAssetsByKey:   self.assetsByKey
+         andOldAssetsByKey:      oldAssetsByKey
+         intoAddedAssetsByKey:   addedAssetsByKey
+         andRemovedAssetsByKey:  removedAssetsByKey
+         ];
     }
 
-    [self _deleteThumbnailsForAssets:removedAssets];
-    NSMutableArray *outputAssets = [self _createThumbnailsForAssets:addedAssets];
 
-    self.monitoredAssets = newAssets;
-    self.monitoredAssetsByKey = newAssetsByKey;
+    [self _deleteThumbnailsForAssets:removedAssetsByKey];
+    [self _createThumbnailsForAssets:addedAssetsByKey];
 
-    [self _sendUpdateEventWithAssets:outputAssets];
+    [self _sendUpdateEvent];
 
     /*
      Create all thumbnails
@@ -418,10 +435,19 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
      */
 }
 
-- (void)_deleteThumbnailsForAssets:(NSArray *)assetList {
+NSMutableArray *assetKeysFromAssets(NSMutableArray *assets) {
+    NSMutableArray *assetKeys = [NSMutableArray new];
+    [assets enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
+        [assetKeys addObject:asset.localIdentifier];
+    }];
+    return assetKeys;
+}
+
+- (void)_deleteThumbnailsForAssets:(NSDictionary *)assetsByKey {
     NSFileManager *fileManager = [NSFileManager defaultManager];
 
-    [assetList enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
+    [assetsByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
+        [self.outputAssetsByKey removeObjectForKey:key];
         NSString *filePath = [self _thumbnailFilePathForAsset:asset];
         NSError *err;
         if (![fileManager removeItemAtPath:filePath error:&err]) {
@@ -430,23 +456,22 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     }];
 }
 
-- (void)_splitNewAssets:(NSDictionary *)newAssets
-           andOldAssets:(NSDictionary *)oldAssets
-        intoAddedAssets:(NSMutableArray *)addedAssets
-       andRemovedAssets:(NSMutableArray *)removedAssets
+- (void)_splitNewAssetsByKey:(NSMutableDictionary *)newAssetsByKey
+           andOldAssetsByKey:(NSMutableDictionary *)oldAssetsByKey
+        intoAddedAssetsByKey:(NSMutableDictionary *)addedAssetsByKey
+       andRemovedAssetsByKey:(NSMutableDictionary *)removedAssetsByKey
 {
-    [newAssets enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
-        if (![oldAssets objectForKey:key]) {
-            [addedAssets addObject:asset];
+    [newAssetsByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
+        if (![oldAssetsByKey objectForKey:key]) {
+            [addedAssetsByKey setObject:asset forKey:key];
         }
     }];
 
-    [oldAssets enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
-        if (![newAssets objectForKey:key]) {
-            [removedAssets addObject:asset];
+    [oldAssetsByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
+        if (![newAssetsByKey objectForKey:key]) {
+            [removedAssetsByKey setObject:asset forKey:key];
         }
     }];
-
 }
 
 - (NSString *)_thumbnailFilePathForAsset:(PHAsset *)asset {
@@ -540,7 +565,6 @@ UIImage *fixOrientation(UIImage *image) {
 {
     image = fixOrientation(image);
 
-    NSLog(@"image: %dx%d orientation:%d", (int)image.size.width, (int)image.size.height, (int)image.imageOrientation);
     NSData *data = UIImageJPEGRepresentation(image, quality/100.0f);
 
     if (!data) {
@@ -558,21 +582,26 @@ UIImage *fixOrientation(UIImage *image) {
     return [[NSURL fileURLWithPath:filePath] absoluteString];
 }
 
-- (NSMutableArray *)_createThumbnailsForAssets:(NSArray *)assetList
+- (void)_createThumbnailsForAssets:(NSDictionary *)assetsByKey
 {
-    PHImageRequestOptions *requestOptions = [PHImageRequestOptions new];
-    requestOptions.synchronous = true;
-    requestOptions.deliveryMode = PHImageRequestOptionsDeliveryModeFastFormat;
-    requestOptions.resizeMode = PHImageRequestOptionsResizeModeFast;
-
-    NSMutableArray *outputAssets = [NSMutableArray new];
     CGSize size;
     size.height = size.width = self.thumbnailSize;
-    [assetList enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
-        NSMutableDictionary *props = [self _fetchAsset:asset targetSize:size withQuality:self.thumbnailQuality];
-        if (props) [outputAssets addObject:props];
+    [assetsByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
+        [self.commandDelegate runInBackground:^{
+            NSMutableDictionary *outputAsset = [self _fetchAsset:asset targetSize:size withQuality:self.thumbnailQuality];
+            if (outputAsset) {
+                pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
+
+                [self.outputAssetsByKey setObject:outputAsset forKey:key];
+                [self _sendUpdateEvent];
+
+                pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
+            }
+        }];
     }];
-    return outputAssets;
+}
+
+- (void)_updateOutputAsset:(NSDictionary *)outputAsset forKey:(NSString *)key {
 }
 
 - (NSMutableDictionary *)_fetchAsset:(PHAsset *)asset targetSize:(CGSize)size withQuality:(NSInteger)quality {
@@ -608,7 +637,7 @@ UIImage *fixOrientation(UIImage *image) {
 - (NSMutableArray *)_enumerateAllAssets
 {
     PHFetchOptions *allPhotosOptions = [PHFetchOptions new];
-    allPhotosOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:YES]];
+    allPhotosOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
 
     PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:allPhotosOptions];
 
