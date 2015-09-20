@@ -1,5 +1,28 @@
 # cordova_photo_assets
-Cordova Plugin for Accessing the Photo Assets on iOS and eventually Android
+Cordova Plugin for Accessing the Photo Assets on iOS and eventually Android.
+
+### Platforms Supported
+
+* Supports iOS 8+ [Photos Framework](https://developer.apple.com/library/prerelease/ios/documentation/Photos/Reference/Photos_Framework/index.html#//apple_ref/doc/uid/TP40014408) (PHAsset, PHAssetCollection, and PHCollectionList)
+* iOS 7 not currently supported, but is planned
+* iOS <= 6 support not planned
+
+### Features
+
+* Currently only supports images
+* List all photo collections (albums)
+* Select any photo collection including those on iCloud
+* Collection asset ranges
+  * Each collection is a list of images ordered by date descending
+  * Select subranges with ```offset``` and ```limit``` options
+  * Thumbnails for all assets in the current range are automatically generated
+  * Asset metadata like ```originalPixelWidth``` and ```originalPixelHeight```
+* Subscribes to changes from iOS and passes updates to client via javascript events
+  * Changes in the collection list
+  * Changes to assets in the asset window
+* Fetch individual assets up to full size and JPG quality
+* Normalized image orientation (all images are properly rotated in the browser)
+* Fully asynchronous and multi-threaded; Only minimal time spent on the main javascript thread.
 
 ## Examples
 
@@ -85,7 +108,7 @@ When setting options, all options are optional. Omitted options will be left unt
 Notes:
 
 * Set ```currentCollectionKey``` to ```"all"``` for all local assets. Set it to ```""``` to stop all asset monitoring. To select specific collections, use ```getCollections``` to get a list of all collections and their respective ```collectionKeys```.
-* ```offset``` and ```limit``` define a "window" into the full list of assets for the current selected collection. Thumbnail images are automatically generated for all assets starting at number ```offset``` through asset number ```offset + limit - 1```. Performance test your application to determine the best performing ```limit``` value.
+* ```offset``` and ```limit``` define a "range" into the full list of assets for the current selected collection. Thumbnail images are automatically generated for all assets starting at number ```offset``` through asset number ```offset + limit - 1```. Performance test your application to determine the best performing ```limit``` value.
 
 #### getOptions
 ```coffeescript
@@ -124,7 +147,7 @@ document.addEventListener 'photoAssetsChanged', ({details})->
   {
     options             # same object returned by getOptions
     collections         # same array returned by getCollections
-    assets              # array of all assets in the current window with valid thumbnails
+    assets              # array of all assets in the current range with valid thumbnails
     currentCollection   # object describing the current collection
   } = details
 
@@ -140,7 +163,7 @@ document.addEventListener 'photoAssetsChanged', ({details})->
   }] = assets
 ```
 
-Thumbnails are generated using a thread-pool. Many ```photoAssetsChanged``` events will be fired as thumbnails are generated. Most of the data in the event is valid. Elements in the ```assets``` array may not have all their fields set until their individual thumbnails have been generated. If ```photoUrl``` is set, it points to a valid thumbnail image. 
+Thumbnails are generated using a thread-pool. Many ```photoAssetsChanged``` events will be fired as thumbnails are generated. Most of the data in the event is valid. Elements in the ```assets``` array may not have all their fields set until their individual thumbnails have been generated. If ```photoUrl``` is set, it points to a valid thumbnail image.
 
 ## Notes
 
