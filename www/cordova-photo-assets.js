@@ -4,14 +4,17 @@
     getCollections: function(successCallback, errorCallback) {
       return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'getCollections', []);
     },
-    setOptions: function(options, successCallback, errorCallback) {
-      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'setOptionsFromJavascript', [options]);
-    },
-    getOptions: function(successCallback, errorCallback) {
-      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'getOptionsForJavascript', []);
-    },
     getPhoto: function(options, successCallback, errorCallback) {
       return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'getPhoto', [options]);
+    },
+    subscribe: function(options, successCallback, errorCallback) {
+      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'subscribe', [options]);
+    },
+    unsubscribe: function(options, successCallback, errorCallback) {
+      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'unsubscribe', [options]);
+    },
+    updateSubscriptionWindow: function(options, successCallback, errorCallback) {
+      return cordova.exec(successCallback, errorCallback, 'PhotoAssets', 'updateSubscriptionWindow', [options]);
     }
   };
 

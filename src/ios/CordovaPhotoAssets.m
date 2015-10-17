@@ -3,7 +3,7 @@
 #import <Photos/Photos.h>
 #import <pthread.h>
 
-NSString *allImageAssetsKey = @"all";
+NSString *allImageAssetsCollectionKey = @"all";
 NSString *localStorageSubdir = @"CordovaPhotoAssets";
 pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 
@@ -21,6 +21,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 @property NSMutableArray *assetKeysInWindow;
 @property NSMutableDictionary *assetsByKey;
 @property NSMutableDictionary *outputAssetsByKey;
+@property NSMutableDictionary *subscriptions;
 @end
 
 
@@ -41,6 +42,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
     self.assetKeysInWindow = [NSMutableArray new];
     self.assetsByKey = [NSMutableDictionary new];
     self.outputAssetsByKey = [NSMutableDictionary new];
+    self.subscriptions = [NSMutableDictionary new];
 
     [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:self]; //(id<PHPhotoLibraryChangeObserver>)
     [self _initLocalStoragePath];
@@ -59,20 +61,6 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 
     }];
 
-}
-
-- (void)getOptionsForJavascript:(CDVInvokedUrlCommand*)command
-{
-    [self.commandDelegate runInBackground:^{
-        pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
-
-        NSMutableDictionary *results = [self _getOptionsAsDictionary];
-
-        pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
-
-        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:results];
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-    }];
 }
 
 void _validateNumberOption
@@ -116,86 +104,178 @@ void _validateStringOption
     }
 }
 
-- (void)setOptionsFromJavascript:(CDVInvokedUrlCommand*)command
+//////////////////////////
+// Extract Options
+//////////////////////////
+
+NSUInteger defaultQuality = 95;
+NSUInteger defaultMaxSize = 0; // 0 == no max size
+NSUInteger defaultLimit = 50;
+NSUInteger defaultOffset = 0;
+
+NSString *getCollectionKeyFromDictionary(NSDictionary *dictionary) {
+    NSString *value = [dictionary objectForKey:@"collectionKey"];
+    if (!value) value = allImageAssetsCollectionKey;
+    return value;
+}
+
+NSString *getSubscriptionHandleFromDictionary(NSDictionary *dictionary) {
+    return [dictionary objectForKey:@"subscriptionHandle"];
+}
+
+NSUInteger getQualityFromDictionary(NSDictionary *dictionary) {
+    NSNumber *nsNumber;
+    NSUInteger value = defaultQuality;
+
+    if ((nsNumber = [dictionary objectForKey:@"quality"])) {
+        value = nsNumber.unsignedIntegerValue;
+        if (value > 100) value = 100;
+    }
+    return value;
+}
+
+NSUInteger getMaxSizeFromDictionary(NSDictionary *dictionary) {
+    NSNumber *nsNumber;
+    NSUInteger value = defaultMaxSize;
+
+    if ((nsNumber = [dictionary objectForKey:@"maxSize"])) {
+        value = nsNumber.unsignedIntegerValue;
+    }
+    return value;
+}
+
+NSUInteger getOffsetFromDictionary(NSDictionary *dictionary) {
+    NSNumber *nsNumber;
+    NSUInteger value = defaultOffset;
+
+    if ((nsNumber = [dictionary objectForKey:@"offset"])) {
+        value = nsNumber.unsignedIntegerValue;
+    }
+    return value;
+}
+
+NSUInteger getLimitFromDictionary(NSDictionary *dictionary) {
+    NSNumber *nsNumber;
+    NSUInteger value = defaultLimit;
+
+    if ((nsNumber = [dictionary objectForKey:@"limit"])) {
+        value = nsNumber.unsignedIntegerValue;
+    }
+    return value;
+}
+
+void setCollectionKeyInDictionary   (NSMutableDictionary *dictionary, NSString  *value) {[dictionary setObject:value                                        forKey:@"collectionKey"];}
+void setLimitInDictionary           (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"offset"];}
+void setOffsetInDictionary          (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"limit"];}
+void setMaxSizeInDictionary         (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"maxSize"];}
+void setQualityInDictionary         (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"quality"];}
+
+NSMutableDictionary *newSubscription(NSDictionary *options) {
+    NSMutableDictionary *subscription = [NSMutableDictionary new];
+
+    [subscription setObject:getSubscriptionHandleFromDictionary(options) forKey:@"subscriptionHandle"];
+    setCollectionKeyInDictionary    (subscription, getCollectionKeyFromDictionary   (options));
+    setLimitInDictionary            (subscription, getLimitFromDictionary           (options));
+    setOffsetInDictionary           (subscription, getOffsetFromDictionary          (options));
+    setMaxSizeInDictionary          (subscription, getMaxSizeFromDictionary         (options));
+    setQualityInDictionary          (subscription, getQualityFromDictionary         (options));
+
+    return subscription;
+}
+
+//////////////////////////
+// Subscriptions
+//////////////////////////
+- (void)subscribe:(CDVInvokedUrlCommand*)command
 {
     [self.commandDelegate runInBackground:^{
-        NSMutableArray *errors = [NSMutableArray new];
         NSDictionary* options = [[command arguments] objectAtIndex:0];
         CDVPluginResult* pluginResult = nil;
 
-        _validateNumberOption(errors, options, @"limit", 1, 1000);
-        _validateNumberOption(errors, options, @"offset", 0, 1000000000);
-        _validateNumberOption(errors, options, @"thumbnailQuality", 0, 100);
-        _validateNumberOption(errors, options, @"thumbnailSize", 1, 10000);
-        _validateStringOption(errors, options, @"currentCollectionKey");
+        NSString *subscriptionHandle = [options objectForKey:@"subscriptionHandle"];
+        NSMutableDictionary *subscription = nil;
 
-        if (errors.count > 0) {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsArray:errors];
+        pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
+
+        if (!subscriptionHandle || subscriptionHandle.length==0) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"missing or blank subscription 'subscriptionHandle' option"];
+        } else if ((subscription = [self.subscriptions objectForKey:subscriptionHandle])) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[NSString stringWithFormat:@"subscription with subscriptionHandle '%@' already exists", subscriptionHandle]];
         } else {
-
-            pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
-
-            NSString *nsString;
-            NSNumber *nsNumber;
-            BOOL thumbnailOptionsChanged = NO;
-            BOOL collectionRangeChanged = NO;
-
-            // limit
-            if ((nsNumber = [options objectForKey:@"limit"])) {
-                NSUInteger limit = nsNumber.unsignedIntegerValue;
-                if (limit != self.limit) {
-                    collectionRangeChanged = YES;
-                    self.limit = limit;
-                }
-            }
-
-            // offset
-            if ((nsNumber = [options objectForKey:@"offset"])) {
-                NSUInteger offset = nsNumber.unsignedIntegerValue;
-                if (offset != self.offset) {
-                    collectionRangeChanged = YES;
-                    self.offset = offset;
-                }
-            }
-
-            // thumbnailQuality
-            if ((nsNumber = [options objectForKey:@"thumbnailQuality"])) {
-                NSUInteger thumbnailQuality = nsNumber.unsignedIntegerValue;
-                if (thumbnailQuality > 100) thumbnailQuality = 100;
-                if (thumbnailQuality != self.thumbnailQuality) {
-                    thumbnailOptionsChanged = YES;
-                    self.offset = thumbnailQuality;
-                }
-            }
-
-            // thumbnailSize
-            if ((nsNumber = [options objectForKey:@"thumbnailSize"])) {
-                NSUInteger thumbnailSize = nsNumber.unsignedIntegerValue;
-                if (thumbnailSize != self.thumbnailSize) {
-                    thumbnailOptionsChanged = YES;
-                    self.thumbnailSize = thumbnailSize;
-                }
-            }
-
-            // currentCollectionKey
-            if ((nsString = [options objectForKey:@"currentCollectionKey"])) {
-                if (nsString != self.currentCollectionKey) {
-                    thumbnailOptionsChanged = YES;
-                    self.currentCollectionKey = nsString;
-                }
-            }
-
-            if (thumbnailOptionsChanged || collectionRangeChanged) {
-                [self _updateThumbnailsAndThumbnailOptionsChanged: thumbnailOptionsChanged];
-            }
-
-            pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
+            [self.subscriptions setObject:newSubscription(options) forKey:subscriptionHandle];
+            [self _updateSubscription: subscription];
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
         }
+
+        pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
 
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
     }];
 }
+
+- (void)updateSubscriptionWindow:(CDVInvokedUrlCommand*)command
+{
+    [self.commandDelegate runInBackground:^{
+        NSDictionary* options = [[command arguments] objectAtIndex:0];
+        CDVPluginResult* pluginResult = nil;
+
+        NSString *subscriptionHandle = getSubscriptionHandleFromDictionary(options);
+        NSMutableDictionary *subscription = nil;
+
+        pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
+
+        if (!subscriptionHandle || subscriptionHandle.length==0) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"missing or blank subscription 'subscriptionHandle' option"];
+        } else if (!(subscription = [self.subscriptions objectForKey:subscriptionHandle])) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[NSString stringWithFormat:@"subscription not found for subscriptionHandle: '%@'", subscriptionHandle]];
+        } else {
+
+            setLimitInDictionary(subscription, getLimitFromDictionary(options));
+            setOffsetInDictionary(subscription, getOffsetFromDictionary(options));
+
+            [self _updateSubscription: subscription];
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        }
+
+        pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
+
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }];
+}
+
+- (void)unsubscribe:(CDVInvokedUrlCommand*)command
+{
+    [self.commandDelegate runInBackground:^{
+        NSDictionary* options = [[command arguments] objectAtIndex:0];
+        CDVPluginResult* pluginResult = nil;
+
+        NSString *subscriptionHandle = [options objectForKey:@"subscriptionHandle"];
+
+        pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
+
+        if (!subscriptionHandle || subscriptionHandle.length==0) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"missing or blank subscription 'subscriptionHandle' option"];
+        } else {
+            NSMutableDictionary *subscription = [self.subscriptions objectForKey:subscriptionHandle];
+            if (!subscription) {
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[NSString stringWithFormat:@"subscription not found for subscriptionHandle: '%@'", subscriptionHandle]];
+            } else {
+
+                [self _deleteImageFilesForAssets:[subscription objectForKey:@"assetsInWindowByKey"] forGroup:subscriptionHandle];
+                [self.subscriptions removeObjectForKey:subscriptionHandle];
+            }
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        }
+
+        pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
+
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }];
+}
+
+//////////////////////////
+//////////////////////////
+
 
 // NOTE: we can get all the EXIF data if we fetch the full-sized image.
 // The returned CIImage has a properties field with this data.
@@ -208,19 +288,8 @@ void _validateStringOption
 
         NSString *assetKey = [options objectForKey:@"assetKey"];
 
-        NSInteger maxSize = 0;
-        NSNumber *maxSizeNSN = nil;
-        if ((maxSizeNSN = (NSNumber *)[options objectForKey:@"maxSize"])) {
-            maxSize = maxSizeNSN.integerValue;
-        }
-
-        NSInteger quality = 95;
-        NSNumber *qualityNSN = nil;
-        if ((qualityNSN = (NSNumber *)[options objectForKey:@"quality"])) {
-            quality = qualityNSN.integerValue;
-            if (quality < 0) quality = 0;
-            if (quality > 100) quality = 100;
-        }
+        NSInteger maxSize = getMaxSizeFromDictionary(options);
+        NSInteger quality = getQualityFromDictionary(options);
 
         PHAsset *asset = assetFromKey(assetKey);
 
@@ -232,7 +301,7 @@ void _validateStringOption
             if (maxSize > 0) {
                 size.height = size.width = maxSize;
             }
-            NSMutableDictionary *fetchedProps = [self _fetchAsset:asset targetSize:size withQuality:quality];
+            NSMutableDictionary *fetchedProps = [self _fetchAsset:asset targetSize:size withQuality:quality forGroup:@"fullSizedPhotos"];
 
             if (fetchedProps)
                 pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:fetchedProps];
@@ -265,7 +334,8 @@ PHAsset *assetFromKey(NSString *assetKey) {
     NSLog(@"photoLibraryDidChange");
     [self.commandDelegate runInBackground:^{
         pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
-        [self _updateThumbnailsAndThumbnailOptionsChanged:NO];
+        [self _updateAllSubscriptions];
+        [self _sendUpdateEventForCollections];
         pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
     }];
 }
@@ -356,9 +426,11 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     return assetsByKey;
 }
 
-- (NSMutableArray *)_getOutputAssetArray {
+- (NSMutableArray *)_getOutputAssetArrayForSubscription:(NSMutableDictionary*)subscription {
     NSMutableArray *result = [NSMutableArray new];
-    [self.assetKeysInWindow enumerateObjectsUsingBlock:^(NSString *key, NSUInteger idx, BOOL *stop) {
+    NSMutableArray *assetKeysInWindow = [subscription objectForKey:@"assetKeysInWindow"];
+
+    [assetKeysInWindow enumerateObjectsUsingBlock:^(NSString *key, NSUInteger idx, BOOL *stop) {
         id outputAsset = [self.outputAssetsByKey objectForKey:key];
         if (!outputAsset) {
             outputAsset = [NSMutableDictionary new];
@@ -369,7 +441,23 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     return result;
 }
 
-- (void)_sendUpdateEvent
+- (void)_sendUpdateEventForSubscription: (NSMutableDictionary *)subscription
+{
+    NSMutableDictionary *details = [NSMutableDictionary new];
+    NSString *subscriptionHandle = getSubscriptionHandleFromDictionary(subscription);
+
+    setCollectionKeyInDictionary(details, getCollectionKeyFromDictionary(subscription));
+    setLimitInDictionary(details, getLimitFromDictionary(subscription));
+    setOffsetInDictionary(details, getOffsetFromDictionary(subscription));
+    setMaxSizeInDictionary(details, getMaxSizeFromDictionary(subscription));
+    setQualityInDictionary(details, getQualityFromDictionary(subscription));
+    [details setObject:subscriptionHandle                                           forKey:@"subscriptionHandle"];
+    [details setObject:[self _getOutputAssetArrayForSubscription: subscription]     forKey:@"assets"];
+
+    [self _dispatchEventType:@"photoAssetsChanged" withDetails:details];
+}
+
+- (void)_sendUpdateEventForCollections
 {
     NSMutableDictionary *details = [NSMutableDictionary new];
     NSArray *collections = _enumerateCollections();
@@ -377,65 +465,61 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     if (!currentCollection) currentCollection = [NSNull new];
 
     [details setObject:collections                      forKey:@"collections"];
-    [details setObject:[self _getOptionsAsDictionary]   forKey:@"options"];
-    [details setObject:[self _getOutputAssetArray]      forKey:@"assets"];
-    [details setObject:currentCollection                forKey:@"currentCollection"];
 
     [self _dispatchEventType:@"photoAssetsChanged" withDetails:details];
 }
 
-- (void)_updateThumbnailsAndThumbnailOptionsChanged:(BOOL)thumbnailOptionsChanged
-{
-    NSMutableArray *newAssets;
-    NSString *currentCollectionKey = self.currentCollectionKey;
 
-    if (currentCollectionKey && [currentCollectionKey isEqualToString:allImageAssetsKey]) {
-        newAssets = [self _enumerateAllAssets];
+- (NSMutableArray *) allAssetsForCollectionKey:(NSString *)collectionKey withOffset:(NSUInteger)offset andLimit:(NSUInteger)limit{
+
+    if (collectionKey && [collectionKey isEqualToString:allImageAssetsCollectionKey]) {
+        return [self _enumerateAllAssetsWithOffset:offset andLimit:limit];
     } else {
         // TODO:
         //   * find the collection which matches currentCollectionKey
         //   * if none match, then we consider it an empty collection (not an error) and return an empty set of assets
         //   * if we found a valid collection, enumerate its assets within the selected window
-        newAssets = [NSMutableArray new];
+        return [NSMutableArray new];
     }
+}
 
-    NSMutableDictionary *addedAssetsByKey = nil;
-    NSMutableDictionary *removedAssetsByKey = nil;
-    NSMutableDictionary *oldAssetsByKey = self.assetsByKey;
+- (void)_updateAllSubscriptions
+{
+    [self.subscriptions enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, NSMutableDictionary *subscription, BOOL * _Nonnull stop) {
+        [self _updateSubscription:subscription];
+    }];
+}
 
-    self.assetsByKey = assetsToAssetsByKey(newAssets);
-    self.assetKeysInWindow = assetKeysFromAssets(newAssets);
+- (void)_updateSubscription:(NSMutableDictionary *)subscription
+{
+    NSString *subscriptionHandle = getSubscriptionHandleFromDictionary(subscription);
+    NSUInteger offset   = getOffsetFromDictionary(subscription);
+    NSUInteger limit    = getLimitFromDictionary(subscription);
+    NSString * collectionKey = getCollectionKeyFromDictionary(subscription);
 
-    if (thumbnailOptionsChanged) {
-        addedAssetsByKey = self.assetsByKey;
-        removedAssetsByKey = oldAssetsByKey;
-    } else {
-        // only the range changed, reuse already-rendered/monitored assets where possible
-        addedAssetsByKey = [NSMutableDictionary new];
-        removedAssetsByKey = [NSMutableDictionary new];
+    NSMutableDictionary *oldAssetsInWindowByKey = [subscription objectForKey:@"assetsInWindowByKey"];
 
-        [self
-         _splitNewAssetsByKey:   self.assetsByKey
-         andOldAssetsByKey:      oldAssetsByKey
-         intoAddedAssetsByKey:   addedAssetsByKey
-         andRemovedAssetsByKey:  removedAssetsByKey
-         ];
-    }
+    NSMutableArray *currentAssetWindow = [self allAssetsForCollectionKey:collectionKey withOffset:offset andLimit:limit];
+    NSMutableArray *currentAssetKeysInWindow = assetKeysFromAssets(currentAssetWindow);
+    NSMutableDictionary *currentAssetsInWindowByKey = assetsToAssetsByKey(currentAssetWindow);
 
+    [subscription setObject:currentAssetsInWindowByKey forKey:@"assetsInWindowByKey"];
+    [subscription setObject:currentAssetKeysInWindow forKey:@"assetKeysInWindow"];
 
-    [self _deleteThumbnailsForAssets:removedAssetsByKey];
-    [self _createThumbnailsForAssets:addedAssetsByKey];
+    NSMutableDictionary *addedAssetsByKey = [NSMutableDictionary new];
+    NSMutableDictionary *removedAssetsByKey = [NSMutableDictionary new];
 
-    [self _sendUpdateEvent];
+    [self
+     _splitNewAssetsByKey:   currentAssetsInWindowByKey
+     andOldAssetsByKey:      oldAssetsInWindowByKey
+     intoAddedAssetsByKey:   addedAssetsByKey
+     andRemovedAssetsByKey:  removedAssetsByKey
+     ];
 
-    /*
-     Create all thumbnails
-     Update monitoring of assets.
-     - stop monitoring some
-     - start monitoring others
-     create data to send to javascript
-     send event to javascript for currently available thumbnails.
-     */
+    [self _deleteImageFilesForAssets:removedAssetsByKey forGroup:subscriptionHandle];
+    [self _createImageFilesForAssets:addedAssetsByKey forSubscription:subscription];
+
+    [self _sendUpdateEventForSubscription:subscription];
 }
 
 NSMutableArray *assetKeysFromAssets(NSMutableArray *assets) {
@@ -446,12 +530,12 @@ NSMutableArray *assetKeysFromAssets(NSMutableArray *assets) {
     return assetKeys;
 }
 
-- (void)_deleteThumbnailsForAssets:(NSDictionary *)assetsByKey {
+- (void)_deleteImageFilesForAssets:(NSDictionary *)assetsByKey forGroup:(NSString *)group {
     NSFileManager *fileManager = [NSFileManager defaultManager];
 
     [assetsByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
         [self.outputAssetsByKey removeObjectForKey:key];
-        NSString *filePath = [self _thumbnailFilePathForAsset:asset];
+        NSString *filePath = [self _filePathForAsset:asset forGroup:group];
         NSError *err;
         if (![fileManager removeItemAtPath:filePath error:&err]) {
             NSLog(@"error deleting thumbnail: %@ error: %@", filePath, [err localizedDescription]);
@@ -477,10 +561,11 @@ NSMutableArray *assetKeysFromAssets(NSMutableArray *assets) {
     }];
 }
 
-- (NSString *)_thumbnailFilePathForAsset:(PHAsset *)asset {
+- (NSString *)_filePathForAsset:(PHAsset *)asset forGroup:(NSString *)group
+{
     NSString *pathFriendlyIdentifier = [asset.localIdentifier stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
     NSUInteger lastModifiedAgeInSeconds = asset.modificationDate.timeIntervalSince1970;
-    return [NSString stringWithFormat:@"%@/thumbnail_%@_%lu.jpg", self.localStoragePath, pathFriendlyIdentifier, (unsigned long)lastModifiedAgeInSeconds];
+    return [NSString stringWithFormat:@"%@/%@_%@_%lu.jpg", self.localStoragePath, group, pathFriendlyIdentifier, (unsigned long)lastModifiedAgeInSeconds];
 }
 
 
@@ -585,18 +670,27 @@ UIImage *fixOrientation(UIImage *image) {
     return [[NSURL fileURLWithPath:filePath] absoluteString];
 }
 
-- (void)_createThumbnailsForAssets:(NSDictionary *)assetsByKey
+//- (void)_createThumbnailsForAssets:(NSDictionary *)assetsByKey
+- (void)_createImageFilesForAssets:(NSDictionary *)assetsByKey forSubscription:(NSMutableDictionary *)subscription
 {
-    CGSize size;
-    size.height = size.width = self.thumbnailSize;
-    [assetsByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
+    NSUInteger quality  = getQualityFromDictionary(subscription);
+    NSUInteger maxSize  = getMaxSizeFromDictionary(subscription);
+    NSString *subscriptionHandle = getSubscriptionHandleFromDictionary(subscription);
+    NSMutableDictionary *assetsInWindowByKey = [subscription objectForKey:@"assetsInWindowByKey"];
+
+    CGSize size = PHImageManagerMaximumSize;
+    if (maxSize > 0) {
+        size.height = size.width = maxSize;
+    }
+
+    [assetsInWindowByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
         [self.commandDelegate runInBackground:^{
-            NSMutableDictionary *outputAsset = [self _fetchAsset:asset targetSize:size withQuality:self.thumbnailQuality];
+            NSMutableDictionary *outputAsset = [self _fetchAsset:asset targetSize:size withQuality:quality forGroup:subscriptionHandle];
             if (outputAsset) {
                 pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
 
-                [self.outputAssetsByKey setObject:outputAsset forKey:key];
-                [self _sendUpdateEvent];
+                [assetsInWindowByKey setObject:outputAsset forKey:key];
+                [self _sendUpdateEventForSubscription: subscription];
 
                 pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
             }
@@ -610,7 +704,11 @@ void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
     [outputAsset setObject:[NSNumber numberWithInt:(int)asset.pixelHeight] forKey:@"originalPixelHeight"];
 }
 
-- (NSMutableDictionary *)_fetchAsset:(PHAsset *)asset targetSize:(CGSize)size withQuality:(NSInteger)quality {
+- (NSMutableDictionary *)_fetchAsset:(PHAsset *)asset
+                          targetSize:(CGSize)size
+                         withQuality:(NSInteger)quality
+                            forGroup:(NSString*)group
+{
     PHImageRequestOptions *requestOptions = [PHImageRequestOptions new];
     requestOptions.synchronous = true;
     requestOptions.deliveryMode = PHImageRequestOptionsDeliveryModeFastFormat;
@@ -624,8 +722,10 @@ void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
      contentMode:           PHImageContentModeAspectFill
      options:               requestOptions
      resultHandler:^(UIImage *image, NSDictionary *info) {
-         NSString *filePath = [self _writeImage:image toFilePath:[self _thumbnailFilePathForAsset:asset] withQuality:quality];
+         NSLog(@"_fetchAsset: imagePresent:%d, assetId:%@, size:%dx%d, targetSize:%dx%d", !!image, asset.localIdentifier, (int)image.size.width, (int)image.size.height, (int)size.width, (int)size.height);
+         NSString *filePath = [self _writeImage:image toFilePath:[self _filePathForAsset:asset forGroup:group] withQuality:quality];
          if (filePath) {
+             NSLog(@"_fetchAsset: assetId:%@, fileUrl:%@", asset.localIdentifier, filePath);
              props = [NSMutableDictionary new];
              [props setObject:filePath              forKey:@"photoUrl"];
              [props setObject:[NSNumber numberWithInt:image.size.width] forKey:@"pixelWidth"];
@@ -638,7 +738,7 @@ void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
     return props;
 }
 
-- (NSMutableArray *)_enumerateAllAssets
+- (NSMutableArray *)_enumerateAllAssetsWithOffset:(NSUInteger)offset andLimit:(NSUInteger)limit
 {
     PHFetchOptions *allPhotosOptions = [PHFetchOptions new];
     allPhotosOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
@@ -646,17 +746,12 @@ void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
     PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:allPhotosOptions];
 
     NSMutableArray *outputAssetList = [NSMutableArray new];
-    __block NSUInteger limit = self.limit;
-    __block NSUInteger offset = self.offset;
+    __block NSUInteger l = limit;
+    __block NSUInteger o = offset;
     [allPhotosResult enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
-        if (offset > 0) {
-            offset--;
-        } else if (limit > 0) {
-            [outputAssetList addObject:asset];
-            limit--;
-        } else {
-            *stop = YES;
-        }
+        if (o > 0) o--;
+        else if (l > 0) {[outputAssetList addObject:asset]; l--;}
+        else *stop = YES;
     }];
 
     return outputAssetList;
@@ -672,7 +767,7 @@ NSArray *_enumerateCollections()
     NSMutableArray *outputArray = [NSMutableArray new];
 
     NSMutableDictionary *outputCollection = [NSMutableDictionary new];
-    [outputCollection setObject:allImageAssetsKey   forKey:@"collectionKey"];
+    [outputCollection setObject:allImageAssetsCollectionKey   forKey:@"collectionKey"];
     [outputCollection setObject:@"Camera Roll"      forKey:@"collectionName"];
     [outputCollection setObject:[NSNumber numberWithInteger:_allPhotoAssetsCount()] forKey:@"estimatedAssetCount"];
     [outputArray addObject:outputCollection];
