@@ -11,16 +11,8 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 // http://stackoverflow.com/questions/25981374/ios-8-photos-framework-get-a-list-of-all-albums-with-ios8
 
 @interface CordovaPhotoAssets () <PHPhotoLibraryChangeObserver>
-@property NSUInteger offset;
-@property NSUInteger thumbnailQuality;
-@property NSUInteger limit;
-@property NSUInteger thumbnailSize;
-@property NSString *currentCollectionKey;
 @property NSString *localStoragePath;
 @property PHImageManager *imageManager;
-@property NSMutableArray *assetKeysInWindow;
-@property NSMutableDictionary *assetsByKey;
-@property NSMutableDictionary *outputAssetsByKey;
 @property NSMutableDictionary *subscriptions;
 @end
 
@@ -32,16 +24,7 @@ pthread_mutex_t cordovaPhotoAssetsSingletonMutex;
 
     pthread_mutex_init(&cordovaPhotoAssetsSingletonMutex, NULL);
 
-    self.offset = 0;
-    self.limit = 50;
-    self.thumbnailSize = 270; // big enough for max thumbnailQuality on iphone6+ at 4 per line (portrait) (iphone6+ device-pixel-width: 1080)
-    self.thumbnailQuality = 95;
-    self.currentCollectionKey = @"";
-
     self.imageManager = [PHImageManager defaultManager];
-    self.assetKeysInWindow = [NSMutableArray new];
-    self.assetsByKey = [NSMutableDictionary new];
-    self.outputAssetsByKey = [NSMutableDictionary new];
     self.subscriptions = [NSMutableDictionary new];
 
     [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:self]; //(id<PHPhotoLibraryChangeObserver>)
@@ -110,7 +93,7 @@ void _validateStringOption
 
 NSUInteger defaultQuality = 95;
 NSUInteger defaultMaxSize = 0; // 0 == no max size
-NSUInteger defaultLimit = 50;
+NSUInteger defaultLimit = 3;
 NSUInteger defaultOffset = 0;
 
 NSString *getCollectionKeyFromDictionary(NSDictionary *dictionary) {
@@ -165,8 +148,8 @@ NSUInteger getLimitFromDictionary(NSDictionary *dictionary) {
 }
 
 void setCollectionKeyInDictionary   (NSMutableDictionary *dictionary, NSString  *value) {[dictionary setObject:value                                        forKey:@"collectionKey"];}
-void setLimitInDictionary           (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"offset"];}
-void setOffsetInDictionary          (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"limit"];}
+void setLimitInDictionary           (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"limit"];}
+void setOffsetInDictionary          (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"offset"];}
 void setMaxSizeInDictionary         (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"maxSize"];}
 void setQualityInDictionary         (NSMutableDictionary *dictionary, NSUInteger value) {[dictionary setObject:[NSNumber numberWithUnsignedInteger: value]  forKey:@"quality"];}
 
@@ -179,6 +162,12 @@ NSMutableDictionary *newSubscription(NSDictionary *options) {
     setOffsetInDictionary           (subscription, getOffsetFromDictionary          (options));
     setMaxSizeInDictionary          (subscription, getMaxSizeFromDictionary         (options));
     setQualityInDictionary          (subscription, getQualityFromDictionary         (options));
+    [subscription setObject:[NSNumber numberWithInteger:0] forKey:@"estimatedAssetCount"];
+
+    [subscription setObject:[NSMutableArray new] forKey:@"assetsInWindow"];
+    [subscription setObject:[NSMutableDictionary new] forKey:@"assetsInWindowByKey"];
+    [subscription setObject:[NSMutableDictionary new] forKey:@"outputAssetsInWindowByKey"];
+
 
     return subscription;
 }
@@ -202,7 +191,8 @@ NSMutableDictionary *newSubscription(NSDictionary *options) {
         } else if ((subscription = [self.subscriptions objectForKey:subscriptionHandle])) {
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[NSString stringWithFormat:@"subscription with subscriptionHandle '%@' already exists", subscriptionHandle]];
         } else {
-            [self.subscriptions setObject:newSubscription(options) forKey:subscriptionHandle];
+            subscription = newSubscription(options);
+            [self.subscriptions setObject:subscription forKey:subscriptionHandle];
             [self _updateSubscription: subscription];
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
         }
@@ -261,7 +251,7 @@ NSMutableDictionary *newSubscription(NSDictionary *options) {
                 pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[NSString stringWithFormat:@"subscription not found for subscriptionHandle: '%@'", subscriptionHandle]];
             } else {
 
-                [self _deleteImageFilesForAssets:[subscription objectForKey:@"assetsInWindowByKey"] forGroup:subscriptionHandle];
+                [self _deleteImageFilesForAssets:[subscription objectForKey:@"assetsInWindowByKey"] forSubscription:subscription];
                 [self.subscriptions removeObjectForKey:subscriptionHandle];
             }
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
@@ -331,7 +321,7 @@ PHAsset *assetFromKey(NSString *assetKey) {
 
 // implement PHPhotoLibraryChangeObserver
 - (void)photoLibraryDidChange:(PHChange *)changeInfo {
-    NSLog(@"photoLibraryDidChange");
+//    NSLog(@"photoLibraryDidChange");
     [self.commandDelegate runInBackground:^{
         pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
         [self _updateAllSubscriptions];
@@ -384,17 +374,6 @@ PHAsset *assetFromKey(NSString *assetKey) {
     }
 }
 
-
-- (NSMutableDictionary *)_getOptionsAsDictionary {
-    NSMutableDictionary *results = [NSMutableDictionary new];
-    [results setObject:[NSNumber numberWithLong:self.limit] forKey:@"limit"];
-    [results setObject:[NSNumber numberWithLong:self.offset] forKey:@"offset"];
-    [results setObject:[NSNumber numberWithLong:self.thumbnailQuality] forKey:@"thumbnailQuality"];
-    [results setObject:[NSNumber numberWithLong:self.thumbnailSize] forKey:@"thumbnailSize"];
-    [results setObject:self.currentCollectionKey forKey:@"currentCollectionKey"];
-    return results;
-}
-
 - (void)_dispatchEventType:(NSString *)eventType withDetails:(id) details {
     if (![NSJSONSerialization isValidJSONObject: details]) {
         NSLog(@"CordovaPhotoAssets DispatchEvent '%@': INVALID VALUE for 'details'. Not NSJSONSerialization compatible.", eventType);
@@ -429,12 +408,14 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 - (NSMutableArray *)_getOutputAssetArrayForSubscription:(NSMutableDictionary*)subscription {
     NSMutableArray *result = [NSMutableArray new];
     NSMutableArray *assetKeysInWindow = [subscription objectForKey:@"assetKeysInWindow"];
+    NSMutableDictionary *assetsInWindowByKey = [subscription objectForKey:@"assetsInWindowByKey"];
+    NSMutableDictionary *outputAssetsInWindowByKey = [subscription objectForKey:@"outputAssetsInWindowByKey"];
 
     [assetKeysInWindow enumerateObjectsUsingBlock:^(NSString *key, NSUInteger idx, BOOL *stop) {
-        id outputAsset = [self.outputAssetsByKey objectForKey:key];
+        id outputAsset = [outputAssetsInWindowByKey objectForKey:key];
         if (!outputAsset) {
             outputAsset = [NSMutableDictionary new];
-            _populateOutputAsset([self.assetsByKey objectForKey:key], outputAsset);
+            _populateOutputAsset([assetsInWindowByKey objectForKey:key], outputAsset);
         }
         [result addObject:outputAsset];
     }];
@@ -451,6 +432,7 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     setOffsetInDictionary(details, getOffsetFromDictionary(subscription));
     setMaxSizeInDictionary(details, getMaxSizeFromDictionary(subscription));
     setQualityInDictionary(details, getQualityFromDictionary(subscription));
+    [details setObject:[subscription objectForKey:@"estimatedAssetCount"] forKey:@"estimatedAssetCount"];
     [details setObject:subscriptionHandle                                           forKey:@"subscriptionHandle"];
     [details setObject:[self _getOutputAssetArrayForSubscription: subscription]     forKey:@"assets"];
 
@@ -461,26 +443,57 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
 {
     NSMutableDictionary *details = [NSMutableDictionary new];
     NSArray *collections = _enumerateCollections();
-    id currentCollection = _findCollection(collections, self.currentCollectionKey);
-    if (!currentCollection) currentCollection = [NSNull new];
 
-    [details setObject:collections                      forKey:@"collections"];
+    [details setObject:collections forKey:@"collections"];
 
     [self _dispatchEventType:@"photoAssetsChanged" withDetails:details];
 }
 
 
-- (NSMutableArray *) allAssetsForCollectionKey:(NSString *)collectionKey withOffset:(NSUInteger)offset andLimit:(NSUInteger)limit{
+- (void)_updateAssetsForAllAssetSubscription:(NSMutableDictionary *)subscription
+{
+    NSUInteger limit = getLimitFromDictionary(subscription);
+    NSUInteger offset = getOffsetFromDictionary(subscription);
+    NSLog(@"CordovaPhotoAssets._updateAssetsForAllAssetSubscription: offset:%d, limit:%d",(int)offset, (int)limit);
+
+    PHFetchOptions *allPhotosOptions = [PHFetchOptions new];
+    allPhotosOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
+
+    PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:allPhotosOptions];
+
+    NSMutableArray *outputAssetList = [NSMutableArray new];
+    __block NSUInteger l = limit;
+    __block NSUInteger o = offset;
+    [allPhotosResult enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
+        if (o > 0) o--;
+        else if (l > 0) {[outputAssetList addObject:asset]; l--;}
+        else *stop = YES;
+    }];
+
+    [subscription setObject:[NSNumber numberWithInteger:_allPhotoAssetsCount()] forKey:@"estimatedAssetCount"];
+    [subscription setObject:allPhotosResult forKey:@"phFetchResult"];
+    [subscription setObject:outputAssetList forKey:@"assetsInWindow"];
+}
+
+- (void) _updateAssetsForSubscription:(NSMutableDictionary *)subscription
+{
+
+    NSString *collectionKey = getCollectionKeyFromDictionary(subscription);
 
     if (collectionKey && [collectionKey isEqualToString:allImageAssetsCollectionKey]) {
-        return [self _enumerateAllAssetsWithOffset:offset andLimit:limit];
+        [self _updateAssetsForAllAssetSubscription:subscription];
     } else {
         // TODO:
         //   * find the collection which matches currentCollectionKey
         //   * if none match, then we consider it an empty collection (not an error) and return an empty set of assets
         //   * if we found a valid collection, enumerate its assets within the selected window
-        return [NSMutableArray new];
+        [subscription setObject:[NSMutableArray new] forKey:@"assetsInWindow"];
+        [subscription setObject:[NSNumber numberWithInteger:0] forKey:@"estimatedAssetCount"];
     }
+
+    NSMutableArray *assetWindow = [subscription objectForKey:@"assetsInWindow"];
+    [subscription setObject:assetsToAssetsByKey(assetWindow) forKey:@"assetsInWindowByKey"];
+    [subscription setObject:assetKeysFromAssets(assetWindow) forKey:@"assetKeysInWindow"];
 }
 
 - (void)_updateAllSubscriptions
@@ -490,35 +503,29 @@ NSMutableDictionary *assetsToAssetsByKey(NSArray *assets) {
     }];
 }
 
-- (void)_updateSubscription:(NSMutableDictionary *)subscription
+- (void)_updateImageFilesForSubscription:(NSMutableDictionary*)subscription
+            oldAssetsInWindowByKey:(NSMutableDictionary*)oldAssetsInWindowByKey
 {
-    NSString *subscriptionHandle = getSubscriptionHandleFromDictionary(subscription);
-    NSUInteger offset   = getOffsetFromDictionary(subscription);
-    NSUInteger limit    = getLimitFromDictionary(subscription);
-    NSString * collectionKey = getCollectionKeyFromDictionary(subscription);
-
-    NSMutableDictionary *oldAssetsInWindowByKey = [subscription objectForKey:@"assetsInWindowByKey"];
-
-    NSMutableArray *currentAssetWindow = [self allAssetsForCollectionKey:collectionKey withOffset:offset andLimit:limit];
-    NSMutableArray *currentAssetKeysInWindow = assetKeysFromAssets(currentAssetWindow);
-    NSMutableDictionary *currentAssetsInWindowByKey = assetsToAssetsByKey(currentAssetWindow);
-
-    [subscription setObject:currentAssetsInWindowByKey forKey:@"assetsInWindowByKey"];
-    [subscription setObject:currentAssetKeysInWindow forKey:@"assetKeysInWindow"];
-
+    NSMutableDictionary *newAssetsInWindowByKey = [subscription objectForKey:@"assetsInWindowByKey"];
     NSMutableDictionary *addedAssetsByKey = [NSMutableDictionary new];
     NSMutableDictionary *removedAssetsByKey = [NSMutableDictionary new];
 
     [self
-     _splitNewAssetsByKey:   currentAssetsInWindowByKey
+     _splitNewAssetsByKey:   newAssetsInWindowByKey
      andOldAssetsByKey:      oldAssetsInWindowByKey
      intoAddedAssetsByKey:   addedAssetsByKey
      andRemovedAssetsByKey:  removedAssetsByKey
      ];
 
-    [self _deleteImageFilesForAssets:removedAssetsByKey forGroup:subscriptionHandle];
+    [self _deleteImageFilesForAssets:removedAssetsByKey forSubscription:subscription];
     [self _createImageFilesForAssets:addedAssetsByKey forSubscription:subscription];
+}
 
+- (void)_updateSubscription:(NSMutableDictionary *)subscription
+{
+    NSMutableDictionary *oldAssetsInWindowByKey = [subscription objectForKey:@"assetsInWindowByKey"];
+    [self _updateAssetsForSubscription:subscription];
+    [self _updateImageFilesForSubscription:subscription oldAssetsInWindowByKey:oldAssetsInWindowByKey];
     [self _sendUpdateEventForSubscription:subscription];
 }
 
@@ -530,11 +537,13 @@ NSMutableArray *assetKeysFromAssets(NSMutableArray *assets) {
     return assetKeys;
 }
 
-- (void)_deleteImageFilesForAssets:(NSDictionary *)assetsByKey forGroup:(NSString *)group {
+- (void)_deleteImageFilesForAssets:(NSDictionary *)assetsByKey forSubscription:(NSMutableDictionary *)subscription {
     NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSString *group = getSubscriptionHandleFromDictionary(subscription);
+    NSMutableDictionary *outputAssetsInWindowByKey = [subscription objectForKey:@"outputAssetsInWindowByKey"];
 
     [assetsByKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, PHAsset *asset, BOOL *stop) {
-        [self.outputAssetsByKey removeObjectForKey:key];
+        [outputAssetsInWindowByKey removeObjectForKey:key];
         NSString *filePath = [self _filePathForAsset:asset forGroup:group];
         NSError *err;
         if (![fileManager removeItemAtPath:filePath error:&err]) {
@@ -677,6 +686,7 @@ UIImage *fixOrientation(UIImage *image) {
     NSUInteger maxSize  = getMaxSizeFromDictionary(subscription);
     NSString *subscriptionHandle = getSubscriptionHandleFromDictionary(subscription);
     NSMutableDictionary *assetsInWindowByKey = [subscription objectForKey:@"assetsInWindowByKey"];
+    NSMutableDictionary *outputAssetsInWindowByKey = [subscription objectForKey:@"outputAssetsInWindowByKey"];
 
     CGSize size = PHImageManagerMaximumSize;
     if (maxSize > 0) {
@@ -689,7 +699,7 @@ UIImage *fixOrientation(UIImage *image) {
             if (outputAsset) {
                 pthread_mutex_lock(&cordovaPhotoAssetsSingletonMutex);
 
-                [assetsInWindowByKey setObject:outputAsset forKey:key];
+                [outputAssetsInWindowByKey setObject:outputAsset forKey:key];
                 [self _sendUpdateEventForSubscription: subscription];
 
                 pthread_mutex_unlock(&cordovaPhotoAssetsSingletonMutex);
@@ -716,6 +726,7 @@ void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
 
     NSMutableDictionary __block *props = nil;
 
+    NSLog(@"_fetchAsset: targetSize:%dx%d", (int)size.width, (int)size.height);
     [self.imageManager
      requestImageForAsset:  asset
      targetSize:            size
@@ -725,7 +736,7 @@ void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
          NSLog(@"_fetchAsset: imagePresent:%d, assetId:%@, size:%dx%d, targetSize:%dx%d", !!image, asset.localIdentifier, (int)image.size.width, (int)image.size.height, (int)size.width, (int)size.height);
          NSString *filePath = [self _writeImage:image toFilePath:[self _filePathForAsset:asset forGroup:group] withQuality:quality];
          if (filePath) {
-             NSLog(@"_fetchAsset: assetId:%@, fileUrl:%@", asset.localIdentifier, filePath);
+//             NSLog(@"_fetchAsset: assetId:%@, fileUrl:%@", asset.localIdentifier, filePath);
              props = [NSMutableDictionary new];
              [props setObject:filePath              forKey:@"photoUrl"];
              [props setObject:[NSNumber numberWithInt:image.size.width] forKey:@"pixelWidth"];
@@ -738,24 +749,6 @@ void _populateOutputAsset(PHAsset *asset, NSMutableDictionary *outputAsset) {
     return props;
 }
 
-- (NSMutableArray *)_enumerateAllAssetsWithOffset:(NSUInteger)offset andLimit:(NSUInteger)limit
-{
-    PHFetchOptions *allPhotosOptions = [PHFetchOptions new];
-    allPhotosOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
-
-    PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:allPhotosOptions];
-
-    NSMutableArray *outputAssetList = [NSMutableArray new];
-    __block NSUInteger l = limit;
-    __block NSUInteger o = offset;
-    [allPhotosResult enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
-        if (o > 0) o--;
-        else if (l > 0) {[outputAssetList addObject:asset]; l--;}
-        else *stop = YES;
-    }];
-
-    return outputAssetList;
-}
 
 NSArray *_enumerateCollections()
 {
@@ -792,22 +785,6 @@ NSMutableDictionary *_findCollection(NSArray *collections, NSString *collectionK
         }
     }];
     return result;
-}
-
-- (void)_enumeratePhotoAssets
-{
-    NSLog(@"fetchAssetsWithMediaType");
-    PHFetchOptions *allPhotosOptions = [PHFetchOptions new];
-    allPhotosOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:YES]];
-
-    PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:allPhotosOptions];
-
-    NSLog(@"fetchAssetsWithMediaType count=%lu", (unsigned long)allPhotosResult.count);
-    __block int limit = 100;
-    [allPhotosResult enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
-        NSLog(@"asset %@", asset);
-        if (limit-- <= 0) {*stop = YES;}
-    }];
 }
 
 NSUInteger _allPhotoAssetsCount()
